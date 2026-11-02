@@ -1,0 +1,66 @@
+name: Benchmark platforms
+
+'on':
+  push:
+    paths: ['benchmark/**', 'viewer/**', '.github/workflows/native-platforms.yml']
+  pull_request:
+    paths: ['benchmark/**', 'viewer/**', '.github/workflows/native-platforms.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-24.04
+          - name: macOS ARM64
+            os: macos-15
+          - name: macOS Intel
+            os: macos-15-intel
+    defaults:
+      run:
+        shell: bash
+        working-directory: benchmark
+    env:
+      PYTEST_ADDOPTS: '--maxfail=3 --tb=short'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+      - name: Linux sandbox prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap gcc g++ make
+      - name: Prepare benchmark
+        run: make setup PYTHON=python3.12
+      - name: Regression suite
+        run: make test
+      - name: Platform smoke
+        run: make smoke
+      - name: Native crash and recovery boundaries
+        if: runner.os == 'macOS'
+        run: >-
+          PYTHONHASHSEED=42 .venv/bin/python -m pytest
+          tests/test_artifact_workflow.py::test_sigkill_recovers_only_state_owned_native_facts
+          -k '3'
+      - name: Prepare viewer consumer
+        working-directory: viewer
+        run: make setup PYTHON=python3.12
+      - name: Independent producer archive roundtrip
+        working-directory: viewer
+        run: >-
+          .venv/bin/python -m pytest
+          'tests/test_producer_roundtrip.py::test_actual_producer_archive_publishes_and_serves_all_role_pairs[3-False]'
+          tests/test_python_probe_contract.py tests/test_archive.py tests/test_models.py
