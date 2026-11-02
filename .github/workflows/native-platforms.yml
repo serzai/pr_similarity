@@ -42,7 +42,20 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes bubblewrap gcc g++ make
+          sudo apt-get install --yes bubblewrap gcc g++ make apparmor
+          # Ubuntu 24.04 requires an application-specific userns permission.
+          # https://documentation.ubuntu.com/release-notes/24.04/
+          sudo tee /etc/apparmor.d/prsim-ci-bwrap >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/prsim-ci-bwrap
+          bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts \
+            --disable-userns --cap-drop ALL --die-with-parent --new-session \
+            --ro-bind / / -- /usr/bin/true
       - name: Prepare benchmark
         run: make setup PYTHON=python3.12
       - name: Regression suite
