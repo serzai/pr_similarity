@@ -451,7 +451,11 @@ class Coordinator:
         path = self.run_dir / '_meta/python.json'
         if saved_python is not None:
             previous = read_reference(self.run_dir, saved_python, PythonReceipt)
-            if previous.content_sha256 != python.receipt.content_sha256 or previous.version != python.receipt.version:
+            if (
+                previous.content_sha256 != python.receipt.content_sha256
+                or previous.version != python.receipt.version
+                or previous.platform != python.receipt.platform
+            ):
                 raise BenchmarkError('resume_python_mismatch', 'Base Python changed; restore it or start a new run.')
         elif self.resumed and any(task.attempt is not None for task in self.store.state.tasks):
             raise BenchmarkError('resume_python_missing', 'Run has no Python provenance; start a new run.')

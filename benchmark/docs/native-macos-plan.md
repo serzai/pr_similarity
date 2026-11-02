@@ -1,6 +1,6 @@
 # Native macOS implementation plan
 
-Status: provisioning and native launch prototypes implemented; benchmark runs
+Status: provisioning, native launch and isolated Python prototypes implemented; benchmark runs
 remain Linux x64/glibc only. Work is on the contributor fork `serzai/pr_similarity`,
 branch `codex/native-macos-foundation`; the original repository is `upstream`.
 This is a development plan, not a macOS quick start.
@@ -56,12 +56,18 @@ Python/sandbox contract. A downloaded Darwin executable alone is insufficient.
   demonstrates this and always kills its owned probe child. Keep native runs
   disabled until normal exit, timeout, cancellation and host death cover detached
   descendants without affecting unrelated host processes.
+  The regression covers `fork`/`setsid`, `POSIX_SPAWN_SETSID` and
+  `POSIX_SPAWN_SETPGROUP` separately. A syscall deny for `setsid`/`setpgid` was
+  tested and does not contain the two `posix_spawn` variants. The macOS SDK also
+  marks kqueue `NOTE_TRACK`, `NOTE_TRACKERR` and `NOTE_CHILD` unsupported since
+  10.5 despite Python exposing those constants.
 
 ### 3. Separate launch paths from Linux mount paths
 
 - [x] Add backend-owned command/environment/preflight behavior and an explicit
   process path layout. `SeatbeltSandbox` is a development prototype sharing the
-  existing launcher interface. Its Python methods fail closed until stage 4.
+  existing launcher interface. Its Python methods bootstrap and validate native
+  private venvs; runner selection remains gated on descendant cleanup.
 - [ ] Complete the backend interface with native Python preparation/probes and
   descendant cleanup. Keep Linux configuration defaults unchanged.
 - [x] Define backend-owned paths for source, cwd, HOME, temporary files, runtime,
@@ -85,30 +91,44 @@ files currently live in a private attempt directory, not a Linux tmpfs.
 
 ### 4. Isolated macOS Python 3.12
 
-- [ ] Discover Mach-O dependencies with `otool`, including framework builds,
-  Homebrew paths, loader-relative paths, extension modules and shared libraries.
-- [ ] Prototype relocation of a package-free copy of the setup interpreter.
+- [x] Discover private Mach-O dependencies with `otool`, including framework
+  builds, `@loader_path`, `@executable_path`, `@rpath`, extensions and transitive
+  shared libraries. Rpaths are anchored to the binary owning each load command.
+- [ ] Validate real Homebrew and Intel installations; only python.org framework
+  Python 3.12 on macOS 26.1 ARM64 has been tested so far.
+- [x] Prototype relocation of a package-free copy of the setup interpreter.
   Account for framework lookup, loader install names and code signatures before
   choosing a supported layout. Reject unsupported installations explicitly.
-- [ ] Preserve the setup interpreter as the agent base. Create a fresh private
+- [x] Preserve the setup interpreter as the agent base. Create a fresh private
   venv per attempt, with offline pip bootstrap; exclude host/benchmark packages.
-- [ ] Replace Linux bin-directory projection with private launchers on macOS.
-  Verify ordinary Python/pip calls and shebangs; reject unsupported interpreter
-  entrypoints. Do not copy or modify protected macOS system command directories.
-- [ ] Test ssl/sqlite3/lzma/bz2/zlib, package installation, source module shadowing,
-  retries, concurrent attempts, cancellation and cleanup.
+- [x] Replace Linux bin-directory projection with private venv entrypoints on macOS.
+  Verify PATH-based Python, `python -m pip`, and `#!/usr/bin/env python`; deny the
+  protected absolute system Python. System command directories are not modified.
+- [ ] Validate direct `pip`/`pip3`, other interpreter entrypoints and shebangs on
+  both supported architectures before advertising the complete command contract.
+- [x] Test ssl/sqlite3/lzma/bz2/zlib, offline wheel installation, source module
+  shadowing, separate attempt packages, deterministic snapshots and preparation
+  cancellation. Verify Python setup, fake-agent events and durable native probes
+  together, including paths with spaces, Unicode and quotes.
+- [ ] Validate compiled dependencies, retries, concurrent native attempts and
+  complete run cleanup through the coordinator after its native backend gate opens.
 
 ### 5. Evidence contracts and consumers
 
-- [ ] Replace Linux-only literals in Python probes with a versioned,
+- [x] Extend Linux-only Python probes with a versioned,
   backend-aware path contract; validate against the measured attempt layout,
   rather than accepting arbitrary absolute paths.
-- [ ] Update benchmark producers, schemas, validators, archive validation and the
-  viewer's independent Python evidence models/validators in the same change.
-- [ ] Define migration/version rules before changing persisted formats. Keep old
+- [x] Update the owning Python probe models and producer/consumer validators.
+  Probe version 2 uses portable native location identifiers and is bound to the
+  runtime platform; mixed path families are rejected.
+- [x] Define migration/version rules before changing persisted formats. Keep old
   Linux reports readable and do not rewrite existing baskets or completed runs.
 - [ ] Ensure resume detects changed backend, Python build and runtime identity;
   ensure published evidence does not disclose credentials or private host paths.
+  The Python resume guard now compares platform identity, with a regression for
+  identical Python bytes across platforms. Successful native probe output and
+  logs contain portable identifiers. Full native launcher/log/traceback
+  redaction and archive roundtrip remain to be validated.
 
 ### 6. End-to-end validation and MR readiness
 
@@ -174,10 +194,37 @@ passed 140 tests. The scheduler integration still fails on macOS at the existing
 bubblewrap provisioning gate. No Python evidence or saved-run schemas were
 changed in this prototype.
 
-The updated `make smoke` (bounded with `--maxfail=1`) reached 252 passed,
+The launch-prototype `make smoke` (bounded with `--maxfail=1`) reached 252 passed,
 one skipped optional real-binary check and the known descendant-cleanup xfail,
 then stopped at the existing `/usr/bin/bwrap` setup test. `make test` still stops
-at the Linux Python discovery used by the archive crash/recovery fixture.
+at the then-Linux-only Python discovery used by the archive crash/recovery fixture.
+
+## Native Python and versioned probe checkpoint
+
+Native preparation passes the final `make setup` interpreter check, including
+offline creation of a clean venv with pip. It copies the real framework interpreter,
+rewrites library paths only in private copies, ad-hoc signs them, and publishes a
+content-verified snapshot. Repeated preparation produces the same receipt. Host
+and benchmark packages are absent from the attempt environment. Linux's probe
+script remains byte-for-byte unchanged.
+
+The native isolation/contract group passed 58 checks with the optional real
+OpenCode smoke enabled. The three strict expected failures all belong to the
+outstanding detached-descendant cleanup problem. Consumer model/archive/
+inference tests passed 86 checks, including historical Linux fixtures. Full
+viewer tests also include browser setup and Linux daemon lifecycle behavior;
+they are not a claim of native viewer-server support.
+
+An additional regression covers creating the per-attempt temporary directory
+without reusing the coordinator's disposable preflight. Its host-independent
+layout check passes; its real Seatbelt bootstrap still needs a run on a host
+where nested sandbox execution is permitted.
+
+With native Python checks added, bounded `make smoke` reached 277 passed,
+one optional real-binary skip and three known cleanup xfails, then failed on the
+existing `/usr/bin/bwrap` setup test. Bounded `make test` reached 12 passed and
+now stops at the Linux sandbox gate rather than `ldd` discovery. No model request
+or publication was performed.
 
 Run these checks from `benchmark/` on an ordinary macOS terminal:
 

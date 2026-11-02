@@ -5,8 +5,9 @@
 The Python 3.12 selected by `make setup` supplies both the benchmark interpreter
 and the base interpreter for agents. Setup verifies its standard-library and
 shared-library dependencies. There is no separate Python downloader or implicit
-fallback to the system `python3`. Install a working Python 3.12 with `venv`,
-`ensurepip` and `ldd` support before setup.
+fallback to the system `python3`. Linux installations need a working Python 3.12
+with `venv`, `ensurepip` and `ldd` support before setup. Experimental native macOS
+preparation is described below; native benchmark runs are not yet enabled.
 
 The runner keeps a content-verified, package-free snapshot of that base Python
 in `provisioning.cache_dir`. It mounts the snapshot read-only and creates a fresh
@@ -59,3 +60,36 @@ Normal shutdown, including handled cancellation, removes the temporary copies.
 An uncatchable termination such as SIGKILL can leave them for host temporary-file
 cleanup. Agent execution supports bubblewrap 0.8.0 with working unprivileged
 user namespaces.
+
+## Experimental native macOS Python
+
+Development preparation supports a package-free copy of the setup interpreter.
+It discovers Mach-O dependencies with `otool`, redirects private library load
+commands in the copy with `install_name_tool`, and ad-hoc signs those copies with
+`codesign`. It never edits the host installation. Command Line Tools are required.
+python.org framework Python 3.12 on macOS 26.1 ARM64 is tested; Homebrew and Intel
+installations still need integration validation. Unknown or ambiguous library
+layouts fail explicitly instead of exposing the original installation.
+
+The snapshot includes only stdlib, headers, the actual interpreter, private
+libraries and a preparation marker. Framework launcher binaries are replaced by
+their real interpreter member. The marker records source content hashes and the
+preparation algorithm; the runtime receipt measures relocated and signed bytes.
+Repeated preparation must yield the same byte identity. Bootstrap starts Python
+with `-B`, and the base snapshot stays readonly inside Seatbelt.
+
+Each attempt gets a fresh private venv with pip. Native Python/pip commands on
+PATH and `#!/usr/bin/env python` shebangs use that venv. Protected absolute system
+Python shebangs cannot be remapped on macOS and are denied; use PATH-based
+entrypoints. GUI frameworks and building compiled project dependencies have not
+yet been validated. Native attempts never inherit benchmark or host packages.
+
+Python probe version 1 retains Linux namespace paths. Version 2 validates real
+native paths at execution time, then stores `@attempt/home/.venv` and
+`@runtime/python` location identifiers so receipts do not disclose private host
+paths. Producers and the viewer reject mixed path families and mismatched runtime
+platforms. Old Linux probe documents remain readable without being rewritten.
+
+Preparation and setup probes work independently of the remaining native runner
+gates. `make run` still selects the Linux executor until descendant cleanup and
+the complete run/resume/publication workflow pass their integration checks.

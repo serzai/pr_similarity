@@ -47,13 +47,25 @@ class PythonReceipt(WireModel):
 
 
 class PythonProbe(WireModel):
-    """Record interpreter paths observed inside the attempt namespace."""
+    """Record namespace paths (v1) or validated native location identifiers (v2)."""
 
     model_config = ConfigDict(strict=True, extra='forbid')
+    schema_version: Literal[1, 2] = 1
     version: str = Field(pattern=r'^3\.12\.[0-9]+$')
-    executable: Literal['/sandbox-home/.venv/bin/python']
-    prefix: Literal['/sandbox-home/.venv']
-    base_prefix: Literal['/benchmark-python']
+    executable: Literal['/sandbox-home/.venv/bin/python', '@attempt/home/.venv/bin/python']
+    prefix: Literal['/sandbox-home/.venv', '@attempt/home/.venv']
+    base_prefix: Literal['/benchmark-python', '@runtime/python']
+
+    @model_validator(mode='after')
+    def verify_paths(self) -> 'PythonProbe':
+        expected = (
+            ('/sandbox-home/.venv/bin/python', '/sandbox-home/.venv', '/benchmark-python')
+            if self.schema_version == 1 else
+            ('@attempt/home/.venv/bin/python', '@attempt/home/.venv', '@runtime/python')
+        )
+        if (self.executable, self.prefix, self.base_prefix) != expected:
+            raise ValueError('Python probe paths differ from their versioned location contract.')
+        return self
 
 
 class PythonAttemptReceipt(WireModel):

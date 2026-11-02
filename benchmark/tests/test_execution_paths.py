@@ -99,7 +99,15 @@ def test_native_python_is_not_silently_replaced_by_host_python(sandbox: Seatbelt
     for operation in (sandbox.prepare_python, sandbox.check_python):
         with pytest.raises(BenchmarkError) as error:
             operation()
-        assert error.value.code == 'python_layout_unsupported'
+        assert error.value.code == 'python_runtime_missing'
+
+
+def test_native_attempt_owns_temporary_directory_before_preflight(sandbox: SeatbeltSandbox) -> None:
+    """Each attempt has a private TMPDIR even when its coordinator used a different probe."""
+    temporary = Path(sandbox.paths.temporary)
+    assert temporary.is_dir()
+    assert temporary.stat().st_mode & 0o777 == 0o700
+    assert not temporary.is_relative_to(sandbox.source)
 
 
 def test_unavailable_seatbelt_never_falls_back_to_a_bare_command(
@@ -232,7 +240,10 @@ class DetachedDescendantSurvived(AssertionError):
     strict=True, raises=DetachedDescendantSurvived,
     reason='Native execution needs a supervisor for detached descendants',
 )
-def test_native_detached_descendants_are_reaped(sandbox: SeatbeltSandbox, tmp_path: Path) -> None:
+@pytest.mark.parametrize('method', ['fork-setsid', 'spawn-session', 'spawn-group'])
+def test_native_detached_descendants_are_reaped(
+    sandbox: SeatbeltSandbox, tmp_path: Path, method: str
+) -> None:
     """Track the lifecycle gate explicitly; always clean up the owned probe process."""
     source = sandbox.source / 'detach.c'
     binary = sandbox.source / 'detach'
@@ -240,24 +251,46 @@ def test_native_detached_descendants_are_reaped(sandbox: SeatbeltSandbox, tmp_pa
     source.write_text('''#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-int main(int argc, char **argv) {
-    int ready[2];
-    if (pipe(ready)) return 2;
-    pid_t child = fork();
-    if (child < 0) return 3;
-    if (child > 0) {
-        close(ready[1]);
-        char c;
-        return read(ready[0], &c, 1) == 1 ? 0 : 4;
-    }
-    close(ready[0]);
-    if (setsid() < 0) _exit(5);
-    FILE *file = fopen(argv[1], "w");
+#include <string.h>
+#include <spawn.h>
+extern char **environ;
+static void linger(const char *path, int ready) {
+    FILE *file = fopen(path, "w");
     if (!file) _exit(6);
     fprintf(file, "%d", getpid()); fclose(file);
-    write(ready[1], "x", 1); close(ready[1]);
+    write(ready, "x", 1); close(ready);
     sleep(20);
-    return 0;
+}
+int main(int argc, char **argv) {
+    if (argc > 3 && strcmp(argv[2], "child") == 0) {
+        linger(argv[1], atoi(argv[3])); return 0;
+    }
+    int ready[2];
+    if (pipe(ready)) return 2;
+    if (strcmp(argv[2], "fork-setsid") == 0) {
+        pid_t child = fork();
+        if (child < 0) return 3;
+        if (child == 0) {
+            close(ready[0]);
+            if (setsid() < 0) _exit(5);
+            linger(argv[1], ready[1]); return 0;
+        }
+    } else {
+        posix_spawnattr_t attributes;
+        posix_spawnattr_init(&attributes);
+        short flags = strcmp(argv[2], "spawn-session") == 0 ? POSIX_SPAWN_SETSID : POSIX_SPAWN_SETPGROUP;
+        posix_spawnattr_setflags(&attributes, flags);
+        posix_spawnattr_setpgroup(&attributes, 0);
+        char descriptor[32]; snprintf(descriptor, sizeof(descriptor), "%d", ready[1]);
+        char *arguments[] = {argv[0], argv[1], "child", descriptor, NULL};
+        pid_t child;
+        int result = posix_spawn(&child, argv[0], NULL, &attributes, arguments, environ);
+        posix_spawnattr_destroy(&attributes);
+        if (result) return 7;
+    }
+    close(ready[1]);
+    char c;
+    return read(ready[0], &c, 1) == 1 ? 0 : 4;
 }
 ''')
     subprocess.run(['/usr/bin/cc', str(source), '-o', str(binary)], capture_output=True, check=True, timeout=30)
@@ -265,7 +298,7 @@ int main(int argc, char **argv) {
     child = None
     try:
         result = run_process(
-            sandbox.command([str(binary), str(pid_file)]), env=sandbox.environment({}), cwd=sandbox.source,
+            sandbox.command([str(binary), str(pid_file), method]), env=sandbox.environment({}), cwd=sandbox.source,
             timeout=5, grace=0.1, cancel=threading.Event(), log=tmp_path / 'detach.log',
         )
         assert result.status == 'completed'

@@ -1,5 +1,6 @@
 """Experimental deny-by-default macOS policy, independent of agent execution."""
 
+import json
 import platform
 import threading
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from benchmark.errors import BenchmarkError
 from benchmark.execution.cancellation import check_cancelled
 from benchmark.execution.paths import ExecutionPaths
 from benchmark.execution.process import run_process
+from benchmark.execution.python_sandbox import python_probe_script
 from benchmark.execution.sandbox import Sandbox
 from benchmark.models.runtime import PythonProbe, SandboxReceipt
 from benchmark.persistence.storage import bytes_sha256
@@ -46,7 +48,8 @@ _PROFILE = '''(version 1)
   (subpath (param "TEMP"))
   (subpath (param "TEMP_ALIAS"))
   (subpath (param "RUNTIME"))
-  (subpath (param "RUNTIME_ALIAS")))
+  (subpath (param "RUNTIME_ALIAS"))
+  PYTHON_READS)
 (allow file-write*
   (subpath (param "SOURCE"))
   (subpath (param "SOURCE_ALIAS"))
@@ -64,6 +67,7 @@ _PROFILE = '''(version 1)
   (subpath "/private/etc/ssl/certs") (subpath "/private/var/db/timezone")
   (literal "/private/var/select/sh")
   (literal "/Library/Preferences/com.apple.networkd.plist"))
+(deny process-exec (literal "/usr/bin/python") (literal "/usr/bin/python3"))
 '''
 
 
@@ -76,6 +80,7 @@ class SeatbeltPolicy:
     temporary: Path
     runtime: Path
     binary: Path
+    python_root: Path | None = None
 
     def __post_init__(self) -> None:
         """Reject overlapping writable roots that would expose private launcher state."""
@@ -88,12 +93,19 @@ class SeatbeltPolicy:
         binary = self.binary.resolve()
         if any(binary.is_relative_to(path) for path in directories[:3]):
             raise BenchmarkError('unsafe_sandbox', 'The pinned executable must stay outside writable attempt paths.')
+        if self.python_root is not None:
+            python = self.python_root.resolve()
+            if python in (Path('/'), Path.home().resolve()) or any(
+                python.is_relative_to(path) or path.is_relative_to(python) for path in directories[:3]
+            ):
+                raise BenchmarkError('unsafe_sandbox', 'The base Python must be private and readonly.')
 
     def profile(self) -> str:
         """Keep paths out of profile syntax by using sandbox-exec parameters."""
         system = '\n  '.join(f'(subpath "{path}")' for path in _SYSTEM_READS)
         ancestors = '\n  '.join(f'(literal (param "ANCESTOR_{index}"))' for index in range(len(self.ancestors())))
-        return _PROFILE.replace('SYSTEM_READS', system).replace('ANCESTORS', ancestors)
+        python = '(subpath (param "PYTHON")) (subpath (param "PYTHON_ALIAS"))' if self.python_root else ''
+        return _PROFILE.replace('SYSTEM_READS', system).replace('ANCESTORS', ancestors).replace('PYTHON_READS', python)
 
     def ancestors(self) -> list[Path]:
         """Permit only traversal metadata, without exposing arbitrary host file metadata."""
@@ -103,10 +115,13 @@ class SeatbeltPolicy:
     def parameters(self) -> dict[str, Path]:
         """Allow standard macOS aliases only for the exact dedicated roots."""
         result = {}
-        for key, path in (
+        paths = [
             ('SOURCE', self.source), ('HOME', self.home), ('TEMP', self.temporary),
             ('RUNTIME', self.runtime), ('BINARY', self.binary), ('GIT', self.source / '.git'),
-        ):
+        ]
+        if self.python_root is not None:
+            paths.append(('PYTHON', self.python_root))
+        for key, path in paths:
             canonical = path.resolve()
             result[key] = canonical
             text = str(canonical)
@@ -128,7 +143,7 @@ class SeatbeltPolicy:
 
 @dataclass(frozen=True)
 class SeatbeltSandbox(Sandbox):
-    """Native launch prototype; not selectable for benchmark runs until Python is ported."""
+    """Native prototype; runner selection is gated on detached descendant cleanup."""
 
     def __post_init__(self) -> None:
         """Validate native paths before the base class creates or chmods any directory."""
@@ -136,6 +151,7 @@ class SeatbeltSandbox(Sandbox):
             raise BenchmarkError('unsafe_sandbox', 'Sandbox cwd must stay inside the source snapshot.')
         self.policy()
         super().__post_init__()
+        Path(self.paths.temporary).mkdir(parents=True, exist_ok=True, mode=0o700)
 
     @property
     def paths(self) -> ExecutionPaths:
@@ -147,7 +163,8 @@ class SeatbeltSandbox(Sandbox):
     def policy(self) -> SeatbeltPolicy:
         """Always validate the complete layout before constructing a command."""
         return SeatbeltPolicy(
-            self.source, self.home, Path(self.paths.temporary), self.runtime_files, self.binary
+            self.source, self.home, Path(self.paths.temporary), self.runtime_files, self.binary,
+            self.python.root if self.python is not None else None,
         )
 
     def command(self, argv: list[str]) -> list[str]:
@@ -170,6 +187,9 @@ class SeatbeltSandbox(Sandbox):
         result['PATH'] = ':'.join((
             str(self.binary.resolve().parent), home + '/.local/bin', home + '/bin', '/usr/bin', '/bin',
         ))
+        if self.python is not None:
+            result['VIRTUAL_ENV'] = home + '/.venv'
+            result['PATH'] = home + '/.venv/bin:' + result['PATH']
         return result
 
     def preflight(self, timeout: int = 10, *, cancel: threading.Event | None = None) -> SandboxReceipt:
@@ -209,11 +229,38 @@ class SeatbeltSandbox(Sandbox):
     def prepare_python(
         self, *, timeout: int = 60, cancel: threading.Event | None = None, bindings: dict[str, str] | None = None
     ) -> PythonProbe:
-        """Fail closed until package-free macOS Python preparation is implemented."""
-        raise BenchmarkError('python_layout_unsupported', 'Native macOS Python preparation is not implemented.')
+        """Bootstrap one clean venv from the relocated, readonly setup interpreter."""
+        if self.python is None:
+            raise BenchmarkError('python_runtime_missing', 'An isolated Python runtime is required.')
+        venv = self.home.resolve() / '.venv'
+        if venv.exists() or venv.is_symlink():
+            raise BenchmarkError('python_venv_exists', 'A fresh attempt requires a new Python environment.')
+        self._python_process(
+            [str(self.python.root / 'bin/python3.12'), '-I', '-B', '-m', 'venv', str(venv)],
+            timeout=timeout, cancel=cancel, log=self.runtime_files / 'python-prepare.log',
+        )
+        # `env python*` shebangs use this venv. Protected absolute system shebangs fail closed.
+        for name in ('python', 'python3', 'python3.12'):
+            target = venv / 'bin' / name
+            if not target.exists():
+                target.symlink_to(venv / 'bin/python3.12')
+        return self.check_python(timeout=timeout, cancel=cancel, bindings=bindings)
 
     def check_python(
         self, *, timeout: int = 30, cancel: threading.Event | None = None, bindings: dict[str, str] | None = None
     ) -> PythonProbe:
-        """Never accept Linux-only Python evidence for a native process."""
-        raise BenchmarkError('python_layout_unsupported', 'Native macOS Python probes are not implemented.')
+        """Validate actual native locations, then emit portable, versioned identifiers."""
+        if self.python is None:
+            raise BenchmarkError('python_runtime_missing', 'An isolated Python runtime is required.')
+        venv = str(self.home.resolve() / '.venv')
+        base = str(self.python.root.resolve())
+        path = self.runtime_files / 'python-probe.py'
+        path.write_text(python_probe_script(base, venv, native=True))
+        lines = self._python_process(
+            [venv + '/bin/python', str(path.resolve())], timeout=timeout, cancel=cancel,
+            log=self.runtime_files / 'python-check.log', bindings=bindings,
+        )
+        probe = PythonProbe.model_validate(json.loads('\n'.join(lines)))
+        if probe.version != self.python.receipt.version or probe.schema_version != 2:
+            raise BenchmarkError('python_preflight_failed', 'Native Python differs from its frozen runtime.')
+        return probe

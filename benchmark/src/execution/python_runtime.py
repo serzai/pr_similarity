@@ -113,16 +113,8 @@ def _libraries(files: dict[str, Path], cancel: threading.Event | None) -> dict[s
     return result
 
 
-def discover_python(cancel: threading.Event | None = None) -> tuple[dict[str, Path], PythonReceipt]:
-    """Measure the running setup interpreter and its standard-library dependencies.
-
-    Returns:
-        Files for a relocatable runtime and their portable content receipt.
-
-    Raises:
-        BenchmarkError: If the installation cannot supply isolated Python 3.12.
-
-    """
+def interpreter_files() -> dict[str, Path]:
+    """Select the setup interpreter and stdlib without inheriting installed packages."""
     if sys.version_info[:2] != (3, 12) or sys.implementation.name != 'cpython':
         raise BenchmarkError('python_version_unsupported', 'Run make setup with Python 3.12.')
     base_executable = getattr(sys, '_base_executable', None)
@@ -134,7 +126,11 @@ def discover_python(cancel: threading.Event | None = None) -> tuple[dict[str, Pa
     if headers.is_dir():
         files.update(_stdlib_files(headers, 'include/python3.12/'))
     files['bin/python3.12'] = executable
-    files.update(_libraries(files, cancel))
+    return files
+
+
+def python_receipt(files: dict[str, Path], cancel: threading.Event | None = None) -> PythonReceipt:
+    """Measure the actual bytes that the attempt will execute, including relocation."""
     manifest = []
     for name, path in sorted(files.items()):
         check_cancelled(cancel)
@@ -142,7 +138,7 @@ def discover_python(cancel: threading.Event | None = None) -> tuple[dict[str, Pa
     identity = hashlib.sha256()
     for item in manifest:
         identity.update(f'{item.path}\0{item.sha256}\0{item.size_bytes}\n'.encode())
-    receipt = PythonReceipt(
+    return PythonReceipt(
         version=platform.python_version(),
         implementation=sys.implementation.name,
         platform=platform.system().lower() + '-' + platform.machine(),
@@ -150,7 +146,13 @@ def discover_python(cancel: threading.Event | None = None) -> tuple[dict[str, Pa
         content_sha256=identity.hexdigest(),
         files=manifest,
     )
-    return files, receipt
+
+
+def discover_python(cancel: threading.Event | None = None) -> tuple[dict[str, Path], PythonReceipt]:
+    """Measure setup Python and its Linux shared libraries without installed packages."""
+    files = interpreter_files()
+    files.update(_libraries(files, cancel))
+    return files, python_receipt(files, cancel)
 
 
 def prepare_python(cache: Path, *, cancel: threading.Event | None = None) -> PythonRuntime:
@@ -164,7 +166,18 @@ def prepare_python(cache: Path, *, cancel: threading.Event | None = None) -> Pyt
         A runtime whose package-free files can be shared read-only by attempts.
 
     """
+    if platform.system() == 'Darwin':
+        from benchmark.execution.macos_python import prepare_macos_python
+
+        return prepare_macos_python(cache, cancel=cancel)
     files, receipt = discover_python(cancel)
+    return publish_python(cache, files, receipt, cancel=cancel)
+
+
+def publish_python(
+    cache: Path, files: dict[str, Path], receipt: PythonReceipt, *, cancel: threading.Event | None = None
+) -> PythonRuntime:
+    """Verify or publish one immutable byte inventory, independent of its preparation."""
     parent = cache / 'python'
     parent.mkdir(parents=True, exist_ok=True)
     destination = parent / receipt.content_sha256
@@ -210,14 +223,18 @@ def prepare_python(cache: Path, *, cancel: threading.Event | None = None) -> Pyt
 
 def validate_setup_python(*, timeout: int = 120) -> None:
     """Verify that setup's interpreter can bootstrap a clean venv with pip offline."""
-    discover_python()
+    if platform.system() != 'Darwin':
+        discover_python()
     with TemporaryDirectory(prefix='benchmark-python-setup-') as temporary:
         root = Path(temporary)
         venv = root / 'venv'
+        executable = sys.executable
+        if platform.system() == 'Darwin':
+            executable = str(prepare_python(root / 'cache').root / 'bin/python3.12')
         environment = {'PATH': os.defpath, 'HOME': str(root), 'PYTHONNOUSERSITE': '1'}
         for argv in (
-            [sys.executable, '-I', '-m', 'venv', str(venv)],
-            [str(venv / 'bin/python'), '-I', '-m', 'pip', '--version'],
+            [executable, '-I', '-B', '-m', 'venv', str(venv)],
+            [str(venv / 'bin/python'), '-I', '-B', '-m', 'pip', '--version'],
         ):
             result = run_process(
                 argv,

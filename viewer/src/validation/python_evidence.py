@@ -41,6 +41,11 @@ def validate_python_attempt(seal: Seal, store: OperationStore, prefix: str) -> N
     ):
         raise ViewerError('invalid_state', 'Python probe receipt differs from archive bytes.')
     probe = store.document(probes[0].path, PythonAttemptReceipt)
+    expected_version = 2 if base.platform.startswith('darwin-') else 1
+    if probe.before_setup.schema_version != expected_version or (
+        probe.before_agent is not None and probe.before_agent.schema_version != expected_version
+    ):
+        raise ViewerError('invalid_state', 'Python probe location contract differs from its platform.')
     if probe.runtime != fact.python_runtime or probe.before_setup.version != base.version:
         raise ViewerError('invalid_state', 'Python probe belongs to a different runtime.')
     if checked_for_agent and probe.before_agent is None:

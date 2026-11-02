@@ -258,7 +258,7 @@ def test_cache_rejects_unmeasured_entries(tmp_path: Path, monkeypatch: pytest.Mo
         files=[entry],
     )
     monkeypatch.setattr(python_runtime, 'discover_python', lambda _cancel: ({entry.path: original}, receipt))
-    runtime = prepare_python(tmp_path / 'cache')
+    runtime = python_runtime.publish_python(tmp_path / 'cache', {entry.path: original}, receipt)
     target = runtime.root / addition
     if addition == 'binary':
         (runtime.root / 'bin/python3.12').write_bytes(b'y')
@@ -273,7 +273,7 @@ def test_cache_rejects_unmeasured_entries(tmp_path: Path, monkeypatch: pytest.Mo
     else:
         target.symlink_to(tmp_path, target_is_directory=True)
     with pytest.raises(BenchmarkError) as error:
-        prepare_python(tmp_path / 'cache')
+        python_runtime.publish_python(tmp_path / 'cache', {entry.path: original}, receipt)
     assert error.value.code == 'python_cache_corrupt'
 
 
@@ -408,6 +408,7 @@ def test_setup_rejects_broken_venv_bootstrap(tmp_path: Path, monkeypatch: pytest
     broken.write_text('#!/bin/sh\necho "ensurepip wheel unavailable" >&2\nexit 1\n')
     broken.chmod(0o755)
     monkeypatch.setattr(python_runtime, 'discover_python', lambda: None)
+    monkeypatch.setattr(python_runtime.platform, 'system', lambda: 'Linux')
     monkeypatch.setattr(sys, 'executable', str(broken))
     with pytest.raises(BenchmarkError) as error:
         python_runtime.validate_setup_python(timeout=5)

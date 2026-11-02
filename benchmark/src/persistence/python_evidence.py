@@ -32,6 +32,11 @@ def validate_python_fact(directory: Path, fact: Seal | Outcome, runtime: Artifac
     if len(probes) != 1:
         raise BenchmarkError('python_probe_mismatch', 'Attempt duplicates its Python probe.')
     probe = read_reference(directory, probes[0], PythonAttemptReceipt)
+    expected_version = 2 if base.platform.startswith('darwin-') else 1
+    if probe.before_setup.schema_version != expected_version or (
+        probe.before_agent is not None and probe.before_agent.schema_version != expected_version
+    ):
+        raise BenchmarkError('python_probe_mismatch', 'Python probe location contract differs from its platform.')
     if probe.runtime != runtime or probe.before_setup.version != base.version:
         raise BenchmarkError('python_probe_mismatch', 'Attempt probe belongs to a different Python runtime.')
     if checked_for_agent and probe.before_agent is None:

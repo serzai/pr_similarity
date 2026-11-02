@@ -41,8 +41,10 @@ OpenCode does not need a separate installation: the runner downloads and caches
 
 Native macOS execution is being developed in [stages](docs/native-macos-plan.md).
 The OpenCode provisioner can select and verify Darwin ARM64/x64 ZIP assets, but
-Python preparation and agent sandbox execution still require Linux. This does
-not yet make `make setup` or `make run` supported on macOS.
+the normal agent runner still requires Linux. Experimental setup preparation now
+relocates a package-free macOS Python and verifies a clean venv; this has been
+tested with python.org Python 3.12 on macOS ARM64. Native `make run` remains gated
+on process cleanup and end-to-end validation. See the [native Python notes](docs/python.md#experimental-native-macos-python).
 
 ## Quick start
 

@@ -273,6 +273,14 @@ PR/MR links accept HTTP(S) without userinfo and use `noopener noreferrer`.
 
 ### Public run config, limits and archive validation
 
+Python evidence is validated against its measured runtime platform. Historical
+probe version 1 uses Linux namespace paths. Native probe version 2 uses portable
+location identifiers (`@attempt/home/.venv` and `@runtime/python`) after producer
+validation of the actual paths. Mixed path families, unsupported probe versions
+and a probe family inconsistent with the base platform are rejected. Existing
+Linux evidence does not gain fields or require conversion. Update benchmark and
+viewer together before importing native v2 evidence.
+
 See Run Config opens the frozen native `agent/opencode.json`, once per run.
 Model/options, ordered permissions, skills, instructions and supported integrations
 keep their native structure. Paths to declared resources are relative to the
