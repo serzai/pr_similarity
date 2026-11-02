@@ -91,5 +91,5 @@ paths. Producers and the viewer reject mixed path families and mismatched runtim
 platforms. Old Linux probe documents remain readable without being rewritten.
 
 Preparation and setup probes work independently of the remaining native runner
-gates. `make run` still selects the Linux executor until descendant cleanup and
-the complete run/resume/publication workflow pass their integration checks.
+gates. `make run` still selects the Linux executor until coordinator/evidence
+integration and the complete run/resume/publication workflow pass their integration checks.

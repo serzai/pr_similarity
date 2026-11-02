@@ -1,6 +1,6 @@
 # Native macOS implementation plan
 
-Status: provisioning, native launch and isolated Python prototypes implemented; benchmark runs
+Status: provisioning, native launch, isolated Python and supervised teardown implemented; benchmark runs
 remain Linux x64/glibc only. Work is on the contributor fork `serzai/pr_similarity`,
 branch `codex/native-macos-foundation`; the original repository is `upstream`.
 This is a development plan, not a macOS quick start.
@@ -50,26 +50,29 @@ Python/sandbox contract. A downloaded Darwin executable alone is insufficient.
 - [x] Gate integration on these negative tests. If the profile cannot preserve
   the required boundary on a supported macOS release, stop native execution and
   revisit the design; never weaken the profile to make a smoke test pass.
-- [ ] Implement supervised descendant teardown. A child that calls `setsid()`
-  currently survives `run_process` process-group cleanup on macOS. The strict
-  expected-failure regression `test_native_detached_descendants_are_reaped`
-  demonstrates this and always kills its owned probe child. Keep native runs
-  disabled until normal exit, timeout, cancellation and host death cover detached
-  descendants without affecting unrelated host processes.
-  The regression covers `fork`/`setsid`, `POSIX_SPAWN_SETSID` and
-  `POSIX_SPAWN_SETPGROUP` separately. A syscall deny for `setsid`/`setpgid` was
-  tested and does not contain the two `posix_spawn` variants. The macOS SDK also
-  marks kqueue `NOTE_TRACK`, `NOTE_TRACKERR` and `NOTE_CHILD` unsupported since
-  10.5 despite Python exposing those constants.
+- [x] Implement supervised descendant teardown using an ephemeral launchd job
+  with its own kernel resource coalition. Freeze and kill only that coalition,
+  using PID-version-aware audit-token signals. A guardian outside Seatbelt
+  survives the coordinator/client and removes its temporary job afterwards.
+  Regressions cover normal exit, timeout, cancellation, callback exceptions,
+  coordinator/client/guardian SIGKILL, double forks, `setsid`,
+  `POSIX_SPAWN_SETSID` and `POSIX_SPAWN_SETPGROUP`; an unrelated process survives.
+  Environment and stdio descriptors cross a private socket in memory, rather
+  than storing provider credentials in launchd property lists.
+  A syscall deny for `setsid`/`setpgid` was previously tested and did not contain
+  the `posix_spawn` variants. The macOS SDK also marks kqueue `NOTE_TRACK`,
+  `NOTE_TRACKERR` and `NOTE_CHILD` unsupported since 10.5 despite Python exposing
+  those constants. These approaches are not used.
 
 ### 3. Separate launch paths from Linux mount paths
 
 - [x] Add backend-owned command/environment/preflight behavior and an explicit
   process path layout. `SeatbeltSandbox` is a development prototype sharing the
   existing launcher interface. Its Python methods bootstrap and validate native
-  private venvs; runner selection remains gated on descendant cleanup.
-- [ ] Complete the backend interface with native Python preparation/probes and
-  descendant cleanup. Keep Linux configuration defaults unchanged.
+  private venvs; runner selection remains gated on coordinator/evidence integration.
+- [x] Complete the backend interface with native Python preparation/probes and
+  descendant cleanup. Setup, diagnostics and agent launches use backend-owned
+  execution. Keep Linux configuration defaults unchanged.
 - [x] Define backend-owned paths for source, cwd, HOME, temporary files, runtime,
   Python and OpenCode. Seatbelt cannot remap host paths to `/repo` or
   `/sandbox-home`; use a dedicated canonical attempt directory on macOS.
@@ -217,8 +220,7 @@ they are not a claim of native viewer-server support.
 
 An additional regression covers creating the per-attempt temporary directory
 without reusing the coordinator's disposable preflight. Its host-independent
-layout check passes; its real Seatbelt bootstrap still needs a run on a host
-where nested sandbox execution is permitted.
+layout check and real Seatbelt bootstrap both pass on macOS 26.1 ARM64.
 
 With native Python checks added, bounded `make smoke` reached 277 passed,
 one optional real-binary skip and three known cleanup xfails, then failed on the
@@ -237,3 +239,40 @@ also exercise the optional real-binary smoke. These checks are included in
 `make smoke`. A parent application sandbox that forbids nested Seatbelt may
 produce `sandbox_apply: Operation not permitted`; that is a failed prerequisite,
 not a reason to silently run the command without isolation.
+
+
+## Supervised native lifecycle checkpoint
+
+Native setup, Python preparation/probes, effective-config diagnostics and agent
+launches now use `Sandbox.run_process`. Linux retains its existing command and
+process-group behavior. Native execution delegates output streaming/redaction to
+the same implementation while an independent launchd guardian owns the payload.
+The guardian refuses a coalition shared with the coordinator; atomic PID-version
+checks reject reused identities. Launchd GUI/user domain availability and the
+private libproc operations are required; absence fails without issuing an agent.
+GUI-domain operation is tested on macOS 26.1 ARM64; headless user-domain operation
+and older macOS versions still need validation.
+
+The previous three strict cleanup xfails are now ordinary passing tests, with a
+fourth case for a double fork. Twelve supervisor tests cover exit status, stdio,
+redaction, cancellation, timeout, callback failure, coordinator/client/guardian
+crashes, PID-version mismatch, concurrent invocations, job/control-directory
+cleanup, and credentials absent from launchd files. The process/launcher/path
+regression group passed 50 checks with two platform/optional skips before the
+last two supervisor regressions were added; those twelve supervisor tests pass.
+No model request or publication was performed.
+
+Remaining integration work is explicit backend selection in the coordinator and
+attempt factory, portable public launcher/log evidence, then an offline full
+run/resume/archive round trip and Linux regression validation. The regular runner
+continues to select bubblewrap until that integration is complete.
+
+
+The full smoke at this checkpoint reached 463 passed, 3 skipped, 73 failed and
+25 fixture errors. Three quota-stop mocks still patched the former module-level
+launch function; they were moved to the backend method and rerun successfully.
+The remaining failures require Linux bubblewrap/system-bin projection or runner
+integration through the still-Linux coordinator. Bounded `make test` again reached
+12 passed before the archive crash/recovery fixture failed at bubblewrap
+provisioning. These full-suite failures remain open; native lifecycle checks do
+not substitute for Linux or full-run validation.

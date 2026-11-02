@@ -15,7 +15,7 @@ from benchmark.execution.agent_input import (
     install_agent_input,
     save_effective,
 )
-from benchmark.execution.process import ProcessResult, run_process
+from benchmark.execution.process import ProcessResult
 from benchmark.execution.provider_errors import classify_provider_error
 from benchmark.execution.sandbox import Sandbox
 from benchmark.execution.transcript import Transcript
@@ -203,8 +203,8 @@ class Invocation:
         lines = []
         log = self.logs / 'effective-config.log'
         try:
-            result = run_process(
-                self.sandbox.command([self.sandbox.paths.binary, 'debug', 'config']),
+            result = self.sandbox.run_process(
+                [self.sandbox.paths.binary, 'debug', 'config'],
                 env=self._environment,
                 cwd=self.sandbox.source,
                 timeout=self.config.data.provisioning.download_timeout_seconds,
@@ -274,8 +274,8 @@ class Invocation:
         if setup is None:
             return None
         assert self._environment is not None
-        return run_process(
-            self.sandbox.command(['/bin/bash', self.sandbox.paths.runtime_file('setup.sh')]),
+        return self.sandbox.run_process(
+            ['/bin/bash', self.sandbox.paths.runtime_file('setup.sh')],
             env=self._environment,
             cwd=self.sandbox.source,
             timeout=setup.timeout_seconds,
@@ -312,8 +312,8 @@ class Invocation:
             """Record a successfully spawned native process before draining output."""
             self.agent_started = True
 
-        result = run_process(
-            self.sandbox.command([self.sandbox.paths.binary, 'run', '--format', 'json', '--log-level', 'DEBUG']),
+        result = self.sandbox.run_process(
+            [self.sandbox.paths.binary, 'run', '--format', 'json', '--log-level', 'DEBUG'],
             env=self._environment,
             cwd=self.sandbox.source,
             timeout=self.config.data.agent.timeout_seconds,

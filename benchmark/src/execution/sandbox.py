@@ -7,10 +7,11 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 from benchmark.errors import BenchmarkError
 from benchmark.execution.cancellation import check_cancelled
-from benchmark.execution.process import run_process
+from benchmark.execution.process import ProcessResult, run_process
 from benchmark.execution.paths import ExecutionPaths
 from benchmark.execution.python_runtime import (
     PYTHON_CONTROLS,
@@ -121,6 +122,10 @@ class Sandbox:
         args.extend(['--', *argv])
         return args
 
+    def run_process(self, argv: list[str], **options: Any) -> ProcessResult:
+        """Own the complete backend lifecycle, not only command construction."""
+        return run_process(self.command(argv), **options)
+
     def environment(
         self, bindings: dict[str, str], *, config_content: str | None = None, auth_content: str | None = None
     ) -> dict[str, str]:
@@ -203,8 +208,8 @@ class Sandbox:
     ) -> list[str]:
         """Run preparation without model credentials and preserve bounded diagnostics."""
         output = []
-        result = run_process(
-            self.command(argv),
+        result = self.run_process(
+            argv,
             env=self.environment(bindings or {}),
             cwd=self.source,
             timeout=timeout,

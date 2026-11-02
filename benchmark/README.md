@@ -44,7 +44,7 @@ The OpenCode provisioner can select and verify Darwin ARM64/x64 ZIP assets, but
 the normal agent runner still requires Linux. Experimental setup preparation now
 relocates a package-free macOS Python and verifies a clean venv; this has been
 tested with python.org Python 3.12 on macOS ARM64. Native `make run` remains gated
-on process cleanup and end-to-end validation. See the [native Python notes](docs/python.md#experimental-native-macos-python).
+on coordinator/evidence integration and end-to-end validation. See the [native Python notes](docs/python.md#experimental-native-macos-python).
 
 ## Quick start
 

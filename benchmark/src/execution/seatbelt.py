@@ -5,11 +5,13 @@ import platform
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from benchmark.errors import BenchmarkError
 from benchmark.execution.cancellation import check_cancelled
 from benchmark.execution.paths import ExecutionPaths
-from benchmark.execution.process import run_process
+from benchmark.execution.process import ProcessResult, run_process
+from benchmark.execution.macos_supervisor import run_macos_process
 from benchmark.execution.python_sandbox import python_probe_script
 from benchmark.execution.sandbox import Sandbox
 from benchmark.models.runtime import PythonProbe, SandboxReceipt
@@ -143,7 +145,7 @@ class SeatbeltPolicy:
 
 @dataclass(frozen=True)
 class SeatbeltSandbox(Sandbox):
-    """Native prototype; runner selection is gated on detached descendant cleanup."""
+    """Native isolation and supervised process lifecycle; coordinator integration is pending."""
 
     def __post_init__(self) -> None:
         """Validate native paths before the base class creates or chmods any directory."""
@@ -172,6 +174,10 @@ class SeatbeltSandbox(Sandbox):
         return self.policy().command([
             '/bin/sh', '-c', 'cd "$1" && shift && exec "$@"', 'benchmark-launch', self.paths.cwd, *argv,
         ])
+
+    def run_process(self, argv: list[str], **options: Any) -> ProcessResult:
+        """Supervise every native phase in a dedicated launchd coalition."""
+        return run_macos_process(self.command(argv), **options)
 
     def environment(
         self, bindings: dict[str, str], *, config_content: str | None = None, auth_content: str | None = None

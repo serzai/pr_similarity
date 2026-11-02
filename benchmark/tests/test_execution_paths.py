@@ -3,7 +3,6 @@
 import json
 import os
 import platform
-import signal
 import subprocess
 import threading
 import time
@@ -16,6 +15,7 @@ from benchmark.errors import BenchmarkError
 from benchmark.execution.agent_input import freeze_agent_input, portable_native
 from benchmark.execution.opencode import Invocation
 from benchmark.execution.paths import ExecutionPaths
+from benchmark.execution.macos_processes import NativeProcesses
 from benchmark.execution.process import ProcessResult, run_process
 from benchmark.execution.seatbelt import SeatbeltSandbox
 from benchmark.persistence.storage import read_json
@@ -231,20 +231,12 @@ def test_native_real_opencode_version_and_config(tmp_path: Path) -> None:
             assert isinstance(json.loads(result.stdout), dict)
 
 
-class DetachedDescendantSurvived(AssertionError):
-    """Only the demonstrated lifecycle failure may be an expected failure."""
-
-
 @native
-@pytest.mark.xfail(
-    strict=True, raises=DetachedDescendantSurvived,
-    reason='Native execution needs a supervisor for detached descendants',
-)
-@pytest.mark.parametrize('method', ['fork-setsid', 'spawn-session', 'spawn-group'])
+@pytest.mark.parametrize('method', ['fork-setsid', 'double-fork', 'spawn-session', 'spawn-group'])
 def test_native_detached_descendants_are_reaped(
-    sandbox: SeatbeltSandbox, tmp_path: Path, method: str
+    sandbox: SeatbeltSandbox, tmp_path: Path, method: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Track the lifecycle gate explicitly; always clean up the owned probe process."""
+    """Detached sessions, groups and double forks remain in the supervised coalition."""
     source = sandbox.source / 'detach.c'
     binary = sandbox.source / 'detach'
     pid_file = sandbox.source / 'detached.pid'
@@ -267,12 +259,13 @@ int main(int argc, char **argv) {
     }
     int ready[2];
     if (pipe(ready)) return 2;
-    if (strcmp(argv[2], "fork-setsid") == 0) {
+    if ((strcmp(argv[2], "fork-setsid") == 0 || strcmp(argv[2], "double-fork") == 0)) {
         pid_t child = fork();
         if (child < 0) return 3;
         if (child == 0) {
             close(ready[0]);
             if (setsid() < 0) _exit(5);
+            if (strcmp(argv[2], "double-fork") == 0 && fork() != 0) _exit(0);
             linger(argv[1], ready[1]); return 0;
         }
     } else {
@@ -295,10 +288,17 @@ int main(int argc, char **argv) {
 ''')
     subprocess.run(['/usr/bin/cc', str(source), '-o', str(binary)], capture_output=True, check=True, timeout=30)
     sandbox.preflight()
-    child = None
+    coalitions = []
+    cleanup = NativeProcesses.cleanup
+
+    def record_cleanup(api: NativeProcesses, coalition: int, **options: object) -> None:
+        coalitions.append(coalition)
+        cleanup(api, coalition, **options)
+
+    monkeypatch.setattr(NativeProcesses, 'cleanup', record_cleanup)
     try:
-        result = run_process(
-            sandbox.command([str(binary), str(pid_file), method]), env=sandbox.environment({}), cwd=sandbox.source,
+        result = sandbox.run_process(
+            [str(binary), str(pid_file), method], env=sandbox.environment({}), cwd=sandbox.source,
             timeout=5, grace=0.1, cancel=threading.Event(), log=tmp_path / 'detach.log',
         )
         assert result.status == 'completed'
@@ -307,12 +307,9 @@ int main(int argc, char **argv) {
             os.kill(child, 0)
         except ProcessLookupError:
             return
-        raise DetachedDescendantSurvived('Detached native descendant survived launch cleanup')
+        raise AssertionError('Detached native descendant survived launch cleanup')
     finally:
-        if child is None and pid_file.exists():
-            child = int(pid_file.read_text())
-        if child is not None:
-            try:
-                os.kill(child, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        # Retain the kernel ownership boundary if the assertion/production cleanup fails.
+        # A bare PID from the fixture file could already belong to an unrelated process.
+        for coalition in set(coalitions):
+            cleanup(NativeProcesses(), coalition)

@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from benchmark.execution import opencode
 from benchmark.execution.opencode import Invocation
 from benchmark.execution.process import ProcessResult
 from benchmark.execution.provider_errors import classify_provider_error
@@ -100,7 +99,7 @@ def test_live_quota_stops_before_process_returns(tmp_path: Path, monkeypatch: py
         assert stop.is_set() == (kind == 'error')
         return ProcessResult('cancelled' if stop.is_set() else 'completed', -15 if stop.is_set() else 0, 1.0, [])
 
-    monkeypatch.setattr(opencode, 'run_process', process)
+    monkeypatch.setattr(Sandbox, 'run_process', process)
     result, tracker = invocation.run(b'task', stop)
     assert len(seen) == int(kind == 'error')
     assert len(tracker.errors) == int(kind == 'error')

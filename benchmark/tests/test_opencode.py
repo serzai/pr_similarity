@@ -1,6 +1,7 @@
 """A real pinned binary receives native config inside the actual sandbox."""
 
 import json
+import platform
 import sys
 import threading
 from pathlib import Path
@@ -24,6 +25,7 @@ def test_launch_events_record_root_without_db_lookup() -> None:
     assert tracker.root_session_id == 'root-session' and len(tracker.errors) == 1
 
 
+@pytest.mark.skipif(platform.system() != 'Linux', reason='bubblewrap integration')
 def test_setup_runs_in_private_home_without_agent(tmp_path: Path) -> None:
     """Verify setup runs in private home without agent."""
     source = tmp_path / 'source'
