@@ -45,9 +45,13 @@ def score_saved(
             'operation_cancelled', 'Scoring was interrupted; resume can use the saved triplets.', exit_code=130
         )
     lines = []
+    environment = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'PYTHONHASHSEED': '42'}
+    if sys.platform == 'linux' and os.environ.get('LD_LIBRARY_PATH'):
+        # The trusted host worker uses the setup Python's selected ELF libraries.
+        environment['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH']
     result = run_process(
         argv or [sys.executable, '-m', 'benchmark.metrics.worker', '--triplets', str(directory), '--prefix', prefix],
-        env={'PATH': os.defpath, 'LANG': 'C.UTF-8', 'PYTHONHASHSEED': '42'},
+        env=environment,
         cwd=directory,
         timeout=float('inf'),
         grace=grace,

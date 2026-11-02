@@ -7,17 +7,17 @@ and the base interpreter for agents. Setup verifies its standard-library and
 shared-library dependencies. There is no separate Python downloader or implicit
 fallback to the system `python3`. Linux installations need a working Python 3.12
 with `venv`, `ensurepip` and `ldd` support before setup. Experimental native macOS
-preparation is described below; native benchmark runs are not yet enabled.
+preparation and execution are described in the [native guide](macos.md).
 
 The runner keeps a content-verified, package-free snapshot of that base Python
 in `provisioning.cache_dir`. It mounts the snapshot read-only and creates a fresh
-writable `/sandbox-home/.venv` **before every attempt's setup**. Setup, diagnostics
+writable venv **before every attempt's setup** (`/sandbox-home/.venv` on Linux). Setup, diagnostics
 and the agent share that attempt environment. Benchmark packages, host packages
 and packages from other attempts are not inherited. A retry or a new attempt
 on resume starts with a new venv; finished and cancelled attempts discard it.
 
 Install task dependencies in setup with `python -m pip install ...`. A new venv
-includes pip but no project dependencies. `python`, `python3`, `python3.12`,
+includes pip but no project dependencies. On Linux, `python`, `python3`, `python3.12`,
 standard `/usr/bin` and `/bin` Python paths, and their shebangs select this venv.
 Other standard `python3.X` commands fail with an explanation. Standard pip
 entrypoints use the same environment. Utilities that require distribution Python
@@ -30,6 +30,12 @@ model execution. Resume requires the same base Python build, including stdlib;
 a changed installation requires restoring that build or starting a new run.
 Patch versions may differ between separate runs. Host-only recovery, rescore
 and reprice do not create an agent venv.
+
+For Linux builds with copied private ELF libraries, the launcher selects those
+libraries from `/benchmark-python/lib`; preflight checks the exact patch version
+before agent execution. Distribution-only layouts retain their existing loader
+environment. Linux namespace details below do not describe the native macOS
+filesystem or absolute entrypoints.
 
 System libraries and non-Python tools still come from the host. This is a
 consistent baseline environment, not a complete container image or a barrier

@@ -68,7 +68,7 @@ def test_python_entrypoints_use_attempt_venv(python_sandbox: Sandbox, executable
                 executable,
                 '-c',
                 'import sys,json,ssl,sqlite3,lzma,bz2,zlib; '
-                'print(json.dumps([list(sys.version_info[:2]),sys.prefix,sys.executable]))',
+                'print(json.dumps([sys.version.split()[0],sys.prefix,sys.executable]))',
             ]
         ),
         env=python_sandbox.environment({}),
@@ -78,7 +78,8 @@ def test_python_entrypoints_use_attempt_venv(python_sandbox: Sandbox, executable
         timeout=30,
     )
     version, prefix, executable_path = json.loads(result.stdout)
-    assert version == [3, 12]
+    assert python_sandbox.python is not None
+    assert version == python_sandbox.python.receipt.version
     assert prefix == '/sandbox-home/.venv'
     assert executable_path.startswith('/sandbox-home/.venv/bin/python')
 

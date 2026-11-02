@@ -77,6 +77,11 @@ def _stdlib_files(root: Path, prefix: str = 'lib/python3.12/') -> dict[str, Path
 def _libraries(files: dict[str, Path], cancel: threading.Event | None) -> dict[str, Path]:
     """Resolve extension dependencies including private OpenSSL and SQLite libraries."""
     result = {}
+    environment = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
+    if os.environ.get('LD_LIBRARY_PATH'):
+        # This host-only discovery must match the setup interpreter's loader.
+        # Sandboxed children receive the copied runtime path, never this value.
+        environment['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH']
     binaries = [path for name, path in files.items() if name.startswith('bin/') or '.so' in path.name]
     for binary in binaries:
         check_cancelled(cancel)
@@ -84,8 +89,8 @@ def _libraries(files: dict[str, Path], cancel: threading.Event | None) -> dict[s
         with TemporaryDirectory(prefix='benchmark-python-discovery-') as temporary:
             probe = run_process(
                 ['ldd', str(binary)],
-                env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'},
-                cwd=Path(temporary),
+                env=environment,
+                cwd=Path.cwd(),
                 timeout=15,
                 grace=0.2,
                 cancel=cancel or threading.Event(),
@@ -103,7 +108,7 @@ def _libraries(files: dict[str, Path], cancel: threading.Event | None) -> dict[s
             if match is None:
                 continue
             library = Path(match[1])
-            if library.is_relative_to('/usr') or library.is_relative_to('/lib') or library.is_relative_to('/lib64'):
+            if any(library.is_relative_to(root) for root in ('/usr/lib', '/usr/lib64', '/lib', '/lib64')):
                 continue
             name = 'lib/' + library.name
             resolved = library.resolve()
@@ -232,6 +237,8 @@ def validate_setup_python(*, timeout: int = 120) -> None:
         if platform.system() == 'Darwin':
             executable = str(prepare_python(root / 'cache').root / 'bin/python3.12')
         environment = {'PATH': os.defpath, 'HOME': str(root), 'PYTHONNOUSERSITE': '1'}
+        if platform.system() == 'Linux' and os.environ.get('LD_LIBRARY_PATH'):
+            environment['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH']
         for argv in (
             [executable, '-I', '-B', '-m', 'venv', str(venv)],
             [str(venv / 'bin/python'), '-I', '-B', '-m', 'pip', '--version'],

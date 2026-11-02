@@ -159,6 +159,13 @@ class Sandbox:
         if self.python is not None:
             result.update(VIRTUAL_ENV=VENV_ROOT, PYTHONNOUSERSITE='1', PIP_CONFIG_FILE='/dev/null')
             result['PATH'] = VENV_ROOT + '/bin:' + result['PATH']
+            if self.python.receipt.platform.startswith('linux-') and any(
+                item.path.startswith('lib/') and '/' not in item.path[4:] and '.so' in item.path
+                for item in self.python.receipt.files
+            ):
+                # Custom builds can retain an absolute ELF RUNPATH into the host
+                # installation. Prefer the libraries actually measured and copied.
+                result['LD_LIBRARY_PATH'] = PYTHON_ROOT + '/lib'
         if config_content is not None:
             result['OPENCODE_CONFIG_CONTENT'] = config_content
         if auth_content is not None:
@@ -253,6 +260,8 @@ class Sandbox:
         self, *, timeout: int = 30, cancel: threading.Event | None = None, bindings: dict[str, str] | None = None
     ) -> PythonProbe:
         """Reject a missing or modified attempt environment before invoking the model."""
+        if self.python is None:
+            raise BenchmarkError('python_runtime_missing', 'An isolated Python runtime is required.')
         (self.runtime_files / 'python-probe.py').write_text(PYTHON_PROBE)
         lines = self._python_process(
             [VENV_ROOT + '/bin/python', '/benchmark-runtime/python-probe.py'],
@@ -261,7 +270,15 @@ class Sandbox:
             log=self.runtime_files / 'python-check.log',
             bindings=bindings,
         )
-        return PythonProbe.model_validate(json.loads('\n'.join(lines)))
+        probe = PythonProbe.model_validate(json.loads('\n'.join(lines)))
+        if probe.schema_version != 1:
+            raise BenchmarkError('python_preflight_failed', 'Linux Python probe requires namespace locations.')
+        if probe.version != self.python.receipt.version:
+            raise BenchmarkError(
+                'python_preflight_failed',
+                f'Attempt Python {probe.version} differs from frozen setup runtime {self.python.receipt.version}.',
+            )
+        return probe
 
     def save_python_logs(self, destination: Path) -> None:
         """Retain credential-free preparation logs before private state is deleted."""

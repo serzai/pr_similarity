@@ -91,3 +91,32 @@ def test_score_child_cancellation_is_bounded(tmp_path: Path) -> None:
     finally:
         timer.join()
     assert (directory / 'index.json').exists()
+
+
+def test_host_score_worker_preserves_loader_selection_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmark.metrics import process
+    from benchmark.execution.process import ProcessResult
+    from benchmark.metrics.scoring import metric_receipt
+    from benchmark.models.scoring import ScoreResult
+
+    directory = triplets(tmp_path)
+    expected = ScoreResult(scoring=score_pr(load_triplets(directory)), metric=metric_receipt(), diagnostics=[])
+    monkeypatch.setattr(process.sys, 'platform', 'linux')
+    monkeypatch.setenv('LD_LIBRARY_PATH', '/opt/setup-python/lib')
+    monkeypatch.setenv('LD_PRELOAD', 'HOST_PRELOAD_SENTINEL')
+    monkeypatch.setenv('OPENAI_API_KEY', 'PROVIDER_SECRET_SENTINEL')
+
+    def worker(_argv: list[str], **settings: object) -> ProcessResult:
+        environment = settings['env']
+        assert isinstance(environment, dict)
+        assert set(environment) == {'PATH', 'LANG', 'PYTHONHASHSEED', 'LD_LIBRARY_PATH'}
+        assert environment['LD_LIBRARY_PATH'] == '/opt/setup-python/lib'
+        output = settings['on_stdout']
+        assert callable(output)
+        output(expected.model_dump_json())
+        return ProcessResult('completed', 0, .01)
+
+    monkeypatch.setattr(process, 'run_process', worker)
+    assert score_saved(directory, 'triplets', tmp_path / 'scoring.log', threading.Event()) == expected
