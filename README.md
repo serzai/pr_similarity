@@ -19,11 +19,13 @@ Use the [Basket Collector](basket_collector/README.md#quick-start) to prepare ta
 and the [Viewer deployment](viewer/docs/deployment.md#persistent-linux-service) when you want to host shared results.
 
 **Linux is the supported platform** for running the collector, benchmark
-and viewer server. You can browse a deployed viewer from any operating system.
+and viewer server. The benchmark also has an [experimental native macOS backend](benchmark/docs/macos.md).
+You can browse a deployed viewer from any operating system.
 
 You need Python 3.12, Make and Git. Agent execution specifically requires
 **Linux x64 with glibc**, working bubblewrap user namespaces, and model access
-through an API key or ChatGPT subscription OAuth. Each module owns its `.venv`;
+through an API key or ChatGPT subscription OAuth. Native macOS uses the explicit
+Seatbelt configuration described above. Each module owns its `.venv`;
 run Make from the module directory. Agent attempts get a separate clean Python
 environment based on the benchmark setup interpreter; see the
 [Python environment contract](benchmark/docs/python.md#python-inside-an-attempt). The viewer accepts Python 3.12 or newer.

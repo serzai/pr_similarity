@@ -12,6 +12,7 @@ from benchmark.execution.cancellation import check_cancelled
 from benchmark.execution.paths import ExecutionPaths
 from benchmark.execution.process import ProcessResult, run_process
 from benchmark.execution.macos_supervisor import run_macos_process
+from benchmark.execution.macos_git import install_macos_git
 from benchmark.execution.python_sandbox import python_probe_script
 from benchmark.execution.sandbox import Sandbox
 from benchmark.models.runtime import PythonProbe, SandboxReceipt
@@ -75,7 +76,7 @@ _PROFILE = '''(version 1)
 
 @dataclass(frozen=True)
 class SeatbeltPolicy:
-    """Describe only dedicated attempt paths; this is not yet a runnable backend."""
+    """Describe the dedicated writable roots and approved readonly runtime inputs."""
 
     source: Path
     home: Path
@@ -145,7 +146,9 @@ class SeatbeltPolicy:
 
 @dataclass(frozen=True)
 class SeatbeltSandbox(Sandbox):
-    """Native isolation and supervised process lifecycle; coordinator integration is pending."""
+    """Native isolation with private Python/Git and supervised process lifecycle."""
+
+    git: Path | None = None
 
     def __post_init__(self) -> None:
         """Validate native paths before the base class creates or chmods any directory."""
@@ -154,6 +157,8 @@ class SeatbeltSandbox(Sandbox):
         self.policy()
         super().__post_init__()
         Path(self.paths.temporary).mkdir(parents=True, exist_ok=True, mode=0o700)
+        if self.git is not None:
+            install_macos_git(self.git, self.runtime_files)
 
     @property
     def paths(self) -> ExecutionPaths:
@@ -175,15 +180,39 @@ class SeatbeltSandbox(Sandbox):
             '/bin/sh', '-c', 'cd "$1" && shift && exec "$@"', 'benchmark-launch', self.paths.cwd, *argv,
         ])
 
+    @property
+    def public_paths(self) -> dict[str, str]:
+        """Display aliases conceal private native storage; they are not bind mounts."""
+        paths = self.paths
+        aliases = dict(zip(
+            (paths.source, paths.home, paths.runtime, paths.binary, paths.temporary),
+            ('/repo', '/sandbox-home', '/benchmark-runtime', '/benchmark-bin/opencode', '/tmp'),
+        ))
+        parents = {Path(path).parent for path in (paths.source, paths.home, paths.runtime, paths.temporary)}
+        if len(parents) == 1:
+            parent = parents.pop()
+            if parent not in (Path('/'), Path.home().resolve()):
+                aliases[str(parent)] = '@attempt'
+        if self.python is not None:
+            aliases[str(self.python.root.resolve())] = '/benchmark-python'
+        for path, alias in list(aliases.items()):
+            if path.startswith(('/private/var/', '/private/tmp/')):
+                aliases[path.removeprefix('/private')] = alias
+        for path, alias in list(aliases.items()):
+            for ascii_only in (False, True):
+                aliases[json.dumps(path, ensure_ascii=ascii_only)[1:-1]] = alias
+        return aliases
+
     def run_process(self, argv: list[str], **options: Any) -> ProcessResult:
         """Supervise every native phase in a dedicated launchd coalition."""
-        return run_macos_process(self.command(argv), **options)
+        return run_macos_process(self.command(argv), path_aliases=self.public_paths, **options)
 
     def environment(
         self, bindings: dict[str, str], *, config_content: str | None = None, auth_content: str | None = None
     ) -> dict[str, str]:
         """Use only private process paths; never import the host process environment."""
-        if any(key.startswith(('DYLD_', '__CF')) for key in bindings):
+        git_controls = {'GIT_EXEC_PATH', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT'}
+        if any(key.startswith(('DYLD_', '__CF')) or key in git_controls for key in bindings):
             raise BenchmarkError('invalid_environment', 'Bindings must not replace private launcher controls.')
         result = super().environment(bindings, config_content=config_content, auth_content=auth_content)
         home = self.paths.home
@@ -193,6 +222,10 @@ class SeatbeltSandbox(Sandbox):
         result['PATH'] = ':'.join((
             str(self.binary.resolve().parent), home + '/.local/bin', home + '/bin', '/usr/bin', '/bin',
         ))
+        if self.git is not None:
+            result.update(GIT_EXEC_PATH=self.paths.runtime + '/git', GIT_CONFIG_NOSYSTEM='1',
+                          GIT_CONFIG_GLOBAL=self.paths.home + '/.gitconfig', GIT_TERMINAL_PROMPT='0')
+            result['PATH'] = self.paths.runtime + '/git:' + result['PATH']
         if self.python is not None:
             result['VIRTUAL_ENV'] = home + '/.venv'
             result['PATH'] = home + '/.venv/bin:' + result['PATH']
@@ -227,7 +260,9 @@ class SeatbeltSandbox(Sandbox):
             forbidden.unlink()
         return SandboxReceipt(
             backend='seatbelt',
-            version=platform.mac_ver()[0] + ':' + bytes_sha256(policy.profile().encode()),
+            version=(platform.mac_ver()[0] + ':'
+                     + bytes_sha256((_PROFILE + repr(_SYSTEM_READS) + ':coalition-v1').encode())
+                     + (':git-' + self.git.name if self.git is not None else '')),
             binary_sha256=bytes_sha256(Path('/usr/bin/sandbox-exec').read_bytes()),
             network='shared',
         )

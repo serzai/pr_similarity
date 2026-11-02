@@ -3,6 +3,7 @@
 import json
 import lzma
 import os
+import platform
 import re
 import shutil
 import signal
@@ -34,6 +35,7 @@ from benchmark.persistence.storage import (
 from benchmark.persistence.triplets import read_triplets
 from benchmark.pricing.operations import reprice
 from benchmark.publication.archive import create_archive, verify_archive
+from benchmark.presentation.visualize import visualize
 from benchmark.runtime import coordinator
 from benchmark.runtime.runner import run
 from benchmark.validation.basket import load_basket
@@ -148,6 +150,15 @@ def _inputs(root: Path, basket_version: int = 3) -> Workflow:
         'model': 'provider/model',
         'provider': {'provider': {'models': {'model': {'options': {'reasoningEffort': 'medium'}}}}},
     }
+    setup = root / 'setup.sh'
+    setup.write_text('''python -I - <<'CHECK'
+import os, sys
+from pathlib import Path
+assert Path(sys.prefix).resolve() == (Path(os.environ['HOME']) / '.venv').resolve()
+CHECK
+printf '%s\\n' "$HOME" > "$HOME/setup-ready"
+printf 'setup %s\\n' "$HOME"
+''')
     config_path = root / 'config.yaml'
     config_path.write_text(
         yaml.safe_dump(
@@ -160,9 +171,12 @@ def _inputs(root: Path, basket_version: int = 3) -> Workflow:
                     'runtime': 'opencode:v1.18.33',
                     'config': {'opencode_json': native},
                     'timeout_seconds': 10,
+                    'setup': {'script': str(setup), 'timeout_seconds': 10},
+                    'env': {'OFFLINE_EXPECT_SETUP': 'yes'},
                 },
                 'provisioning': {'cache_dir': str(root / 'cache')},
-                'sandbox': {'executable': '/usr/bin/bwrap', 'auto_install': False},
+                'sandbox': ({'backend': 'seatbelt'} if platform.system() == 'Darwin' else
+                            {'executable': '/usr/bin/bwrap', 'auto_install': False}),
             },
             allow_unicode=True,
         ),
@@ -174,7 +188,8 @@ def _inputs(root: Path, basket_version: int = 3) -> Workflow:
             selector='opencode:v1.18.33',
             actual_version='1.18.33',
             asset_name='offline-native-fixture.py',
-            platform='linux-x64-offline-fixture',
+            platform=('darwin-' + platform.machine() + '-offline-fixture' if platform.system() == 'Darwin'
+                      else 'linux-x64-offline-fixture'),
             archive_sha256=bytes_sha256(executable.read_bytes()),
             binary_sha256=bytes_sha256(executable.read_bytes()),
         ),
@@ -316,6 +331,7 @@ def test_public_runner_native_artifact_workflow(
     assert report.inference.effective.model.value == 'provider/model'
     row = report.tasks[0]
     assert row.execution.status == 'completed' and row.scoring.status == 'available'
+    assert row.setup.status == 'completed'
     assert row.progress.phase == 'completed'
     assert row.final_attempt is not None
     assert (
@@ -373,6 +389,9 @@ def test_public_runner_native_artifact_workflow(
     assert current.tasks[0].telemetry.api_equivalent is not None
     price = current.tasks[0].telemetry.api_equivalent
     assert price is not None and price.amount is not None and price.amount > 0
+    html = visualize(moved, level='ERROR')
+    assert 'Offline artifact workflow' in html.read_text()
+    html.rename(tmp_path / 'offline-report.html')
     archive = create_archive(moved, tmp_path / 'producer.tar.gz')
     assert verify_archive(archive.path).complete
     with tarfile.open(archive.path, 'r:gz') as saved:
@@ -380,12 +399,26 @@ def test_public_runner_native_artifact_workflow(
         assert member is not None
         with member:
             assert member.read() == frozen
+        if platform.system() == 'Darwin':
+            for entry in saved.getmembers():
+                if entry.isfile():
+                    member = saved.extractfile(entry)
+                    assert member is not None
+                    with member:
+                        content = member.read()
+                    assert b'benchmark-attempt-' not in content, entry.name
+                    assert b'benchmark-preflight-' not in content, entry.name
     _serialization(moved, frozen)
     _export(moved, archive.path)
 
 
 def _process_identity(pid: int) -> tuple[str, int] | None:
     """Inspect only an owned PID's state/start identity without reading process environments."""
+    if platform.system() == 'Darwin':
+        from benchmark.execution.macos_processes import NativeProcesses
+
+        identity = NativeProcesses().identity(pid)
+        return None if identity is None else ('Z' if identity.status == 5 else str(identity.status), identity.unique)
     try:
         fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
     except OSError:
@@ -429,10 +462,19 @@ def _kill_owned(process: subprocess.Popen, descendants: list[ProcessIdentity]) -
         time.sleep(0.02)
     remaining = _living(descendants)
     try:
-        assert not remaining, f'bubblewrap descendants survived parent SIGKILL: {remaining}'
+        assert not remaining, f'Sandbox descendants survived parent SIGKILL: {remaining}'
     finally:
         for pid in _living(descendants):
-            os.kill(pid, signal.SIGKILL)
+            if platform.system() == 'Darwin':
+                from benchmark.execution.macos_processes import NativeProcesses
+
+                api = NativeProcesses()
+                current = api.identity(pid)
+                expected = next(item.start_time for item in descendants if item.pid == pid)
+                if current is not None and current.unique == expected:
+                    api.send(current, signal.SIGKILL)
+            else:
+                os.kill(pid, signal.SIGKILL)
 
 
 def _crash(root: Path, boundary: str) -> tuple[Path, CrashNotice]:
@@ -542,3 +584,49 @@ def test_sigkill_recovers_only_state_owned_native_facts(
         assert State.model_validate(read_json(directory / '_meta/state.json')).tasks[0].history[0].seal is None
     else:
         assert native_cost.amount == '0.5' and native_cost.coverage.total_attempts == 1
+
+
+def test_parallel_native_attempts_keep_source_python_and_usage_separate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run two actual sandbox attempts concurrently against one shared readonly runtime."""
+    import threading
+    from benchmark.execution.opencode import Invocation
+    from benchmark.models import BasketV3
+    from benchmark.models.sources import task_identity
+    from benchmark.persistence.storage import sha256
+
+    inputs = _inputs(tmp_path)
+    data = BasketV3.model_validate(read_json(inputs.dataset))
+    second = data.tasks[0].model_copy(deep=True)
+    second.id = task_identity(data.meta.repository, 'pull_request', 2)
+    second.change_request.number, second.change_request.url = 2, 'https://github.com/owner/repo/pull/2'
+    data.tasks.append(second)
+    data.meta.counts.input = data.meta.counts.succeeded = 2
+    for counts in (data.meta.coverage.collect, data.meta.coverage.filter, data.meta.coverage.generate):
+        counts.input = counts.succeeded = 2
+    data.meta.coverage.discovery.matched = data.meta.coverage.discovery.selected = data.meta.coverage.selected = 2
+    selected = data.meta.selection
+    selected.selected_ids.append(second.id)
+    selected.generation_keys[second.id] = second.provenance.generation.input_sha256
+    selected.fingerprint = sha256({'tasks': [[key, selected.generation_keys[key]] for key in selected.selected_ids]})
+    write_json(inputs.dataset, data)
+    config = load_config(tmp_path / 'config.yaml', workers=2)
+    monkeypatch.setattr(coordinator, 'provision_opencode', lambda *_args, **_kwargs: inputs.runtime)
+    barrier = threading.Barrier(2)
+    original_run = Invocation.run
+
+    def together(self: Invocation, *args: object, **kwargs: object):
+        barrier.wait(timeout=30)
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(Invocation, 'run', together)
+    code, directory = run(config, inputs.dataset, output=tmp_path / 'runs', progress='off')
+    assert code == 0
+    report = Report.model_validate(read_json(directory / 'report.json'))
+    assert len(report.tasks) == 2
+    assert all(row.execution.status == 'completed' and row.scoring.status == 'available' for row in report.tasks)
+    assert len({row.final_attempt.id for row in report.tasks}) == 2
+    assert [row.telemetry.tokens.total for row in report.tasks] == [16, 16]
+    assert [row.telemetry.cost.amount for row in report.tasks] == [.5, .5]
+    assert verify_archive(create_archive(directory, tmp_path / 'parallel.tar.gz').path).complete

@@ -47,7 +47,8 @@ make test
 ```
 
 Collector and benchmark also require `make smoke`. Agent execution requires Linux
-x64/glibc and working bubblewrap user namespaces. Viewer browser tests require
+x64/glibc and working bubblewrap user namespaces, or the explicit experimental
+[native macOS prerequisites](benchmark/docs/macos.md). Viewer browser tests require
 `make browser-setup` and the documented Playwright system libraries.
 
 Keep changes scoped, update affected file/API producers and consumers together,

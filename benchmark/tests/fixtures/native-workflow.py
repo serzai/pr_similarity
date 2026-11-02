@@ -1,9 +1,10 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """Provider-free executable exercising native process, source and SQLite adapters."""
 
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import sysconfig
 import time
@@ -65,7 +66,7 @@ def changes() -> None:
 
 def mark_attempt() -> None:
     """Prove a real retried or resumed native attempt never inherits earlier packages."""
-    assert sys.prefix == '/sandbox-home/.venv'
+    assert Path(sys.prefix).resolve() == (Path(os.environ['HOME']) / '.venv').resolve()
     marker = Path(sysconfig.get_path('purelib')) / 'previous_attempt_marker.py'
     assert not marker.exists(), 'A new native attempt inherited an earlier venv.'
     marker.write_text('ATTEMPT_MARKER = True\n')
@@ -80,6 +81,9 @@ def main() -> None:
     else:
         assert 'run' in sys.argv and '--format' in sys.argv
         mark_attempt()
+        subprocess.run(['git', 'status', '--porcelain'], check=True, capture_output=True)
+        if os.environ.get('OFFLINE_EXPECT_SETUP') == 'yes':
+            assert (Path(os.environ['HOME']) / 'setup-ready').is_file()
         assert sys.stdin.buffer.read()
         changes()
         usage()
@@ -93,7 +97,9 @@ def main() -> None:
                 }
             )
             time.sleep(60)
-        emit({'type': 'text', 'sessionID': 'root', 'part': {'text': 'Offline fixture: Завершено'}})
+        emit({'type': 'text', 'sessionID': 'root', 'part': {
+            'text': 'Offline fixture: Завершено; ' + sys.prefix + '; ' + str(Path.cwd()) + '; ' + os.environ['TMPDIR'] + '; ' + str(Path(os.environ['HOME']).parent),
+        }})
         emit({'type': 'step_finish', 'sessionID': 'root', 'part': {'type': 'step-finish', 'reason': 'stop'}})
         print('Offline native fixture completed.', file=sys.stderr)
 

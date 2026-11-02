@@ -1,6 +1,8 @@
 """Pause real public execution at durable boundaries for owned-process SIGKILL tests."""
 
 import os
+import json
+import platform
 import sys
 import threading
 from pathlib import Path
@@ -22,6 +24,29 @@ BOUNDARY = sys.argv[2]
 
 def descendants(parent: int) -> list[dict]:
     """Record only this driver's descendant process identities without reading environments."""
+    if platform.system() == 'Darwin':
+        from benchmark.execution.macos_processes import NativeProcesses
+
+        api = NativeProcesses()
+        caller = api.identity(parent)
+        if caller is None:
+            return []
+        result = []
+        # The guardian is a launchd child, so follow its trusted ownership receipt,
+        # rather than treating the caller's shared app coalition as test-owned.
+        for path in Path('/private/tmp').glob('prsim-*/caller.json'):
+            try:
+                owner = json.loads(path.read_text())
+                if (owner['pid'], owner['unique']) != (parent, caller.unique):
+                    continue
+                guardian = json.loads(path.with_name('guardian.json').read_text())
+                if guardian['coalition'] == caller.coalition:
+                    raise AssertionError('Guardian must have a dedicated coalition')
+                result.extend({'pid': item.pid, 'start_time': item.unique}
+                              for item in api.members(guardian['coalition']))
+            except (FileNotFoundError, KeyError, ValueError):
+                continue
+        return result
     result = []
     pending = [parent]
     while pending:
@@ -125,7 +150,8 @@ def main() -> None:
             selector='opencode:v1.18.33',
             actual_version='1.18.33',
             asset_name='offline-native-fixture.py',
-            platform='linux-x64-offline-fixture',
+            platform=('darwin-' + platform.machine() + '-offline-fixture' if platform.system() == 'Darwin'
+                      else 'linux-x64-offline-fixture'),
             archive_sha256=digest,
             binary_sha256=digest,
         ),

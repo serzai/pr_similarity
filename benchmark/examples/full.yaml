@@ -49,7 +49,7 @@ agent:
   # API-key alternative: {OPENAI_API_KEY: OPENAI_API_KEY} (sandbox name: host name).
 
 sandbox:
-  backend: bubblewrap
+  backend: bubblewrap           # On macOS: seatbelt, executable: /usr/bin/sandbox-exec, auto_install: false.
   executable: bwrap
   auto_install: true            # Use the verified cached build if discovery is incompatible.
 

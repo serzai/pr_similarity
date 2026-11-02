@@ -15,7 +15,7 @@ from benchmark.execution.agent_input import (
     install_agent_input,
     save_effective,
 )
-from benchmark.execution.process import ProcessResult
+from benchmark.execution.process import ProcessResult, Redactor
 from benchmark.execution.provider_errors import classify_provider_error
 from benchmark.execution.sandbox import Sandbox
 from benchmark.execution.transcript import Transcript
@@ -128,12 +128,14 @@ class Invocation:
         if self.auth_content is not None:
             secret_values.append(json.loads(self.auth_content)['openai']['access'])
 
-        def save_public(path: Path, content: bytes) -> None:
+        def save_public(path: Path, content: bytes, *, aliases: bool = False) -> None:
             """Save a declared input only when it contains no known credential."""
             if any(value and value.encode() in content for value in secret_values):
                 raise BenchmarkError(
                     'resource_secret', 'A declared input contains a credential; use environment bindings.', exit_code=1
                 )
+            if aliases:
+                content = Redactor([], self.sandbox.public_paths).feed(content, final=True)
             atomic_write(path, content)
 
         if self.run_directory is not None:
@@ -159,7 +161,8 @@ class Invocation:
             for source in sorted(self.sandbox.runtime_files.rglob('*')):
                 if source.is_file():
                     save_public(
-                        self.artifacts / 'runtime' / source.relative_to(self.sandbox.runtime_files), source.read_bytes()
+                        self.artifacts / 'runtime' / source.relative_to(self.sandbox.runtime_files),
+                        source.read_bytes(), aliases=True
                     )
         write_json(
             self.artifacts / 'launch.json',
@@ -167,7 +170,8 @@ class Invocation:
                 'runtime': agent.runtime,
                 'created_at': utc_now(),
                 'cwd': self.sandbox.cwd.relative_to(self.sandbox.source).as_posix(),
-                'argv': [self.sandbox.paths.binary, 'run', '--format', 'json'],
+                'argv': [self.sandbox.public_paths.get(self.sandbox.paths.binary, self.sandbox.paths.binary),
+                         'run', '--format', 'json'],
                 'prompt_transport': 'stdin',
                 'native_config': 'agent/opencode.json' if self.run_directory is not None else 'runtime/config.json',
                 'agent_input': self.agent_input,

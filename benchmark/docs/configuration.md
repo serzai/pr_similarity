@@ -20,6 +20,7 @@ discovered by OpenCode, stored under `agent/effective/`.
 | `agent.config.opencode_json.mcp` | Native local/remote MCP connections |
 | `agent.setup.script`, `timeout_seconds` | Bash setup file and its separate time budget |
 | `agent.timeout_seconds` | Agent time budget after setup |
+| `sandbox.backend` | `bubblewrap` on Linux; experimental `seatbelt` on macOS (see [native setup](macos.md)) |
 | `git.timeout_seconds` | Timeout per Git command; shared-cache waiting lasts until acquisition or cancellation |
 | `agent.credentials` | Sandbox variable name → host secret variable name |
 | `agent.env` | Nonsensitive environment values forwarded to setup and agent |

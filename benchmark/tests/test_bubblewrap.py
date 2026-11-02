@@ -100,6 +100,8 @@ def test_incompatible_binary_with_auto_install_warns_before_the_fallback(
         """Fail the pinned download so the fallback attempt is observable offline."""
         raise OSError('offline')
 
+    monkeypatch.setattr('benchmark.execution.bubblewrap.platform.system', lambda: 'Linux')
+    monkeypatch.setattr('benchmark.execution.bubblewrap.platform.machine', lambda: 'x86_64')
     old = stub(tmp_path, 'bwrap', OLD_BWRAP)
     extractor = stub(tmp_path, 'dpkg-deb', '#!/bin/sh\nexit 0\n')
     monkeypatch.setattr(

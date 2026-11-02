@@ -19,9 +19,11 @@ from benchmark.errors import BenchmarkError
 class Redactor:
     """Keep enough bytes between chunks to mask secrets crossing read boundaries."""
 
-    def __init__(self, secrets: list[str]) -> None:
+    def __init__(self, secrets: list[str], replacements: dict[str, str] | None = None) -> None:
         """Initialize a streaming buffer for known secret spans."""
-        values = sorted({value.encode('utf-8') for value in secrets if value}, key=len, reverse=True)
+        self.replacements = {key.encode(): value.encode() for key, value in (replacements or {}).items() if key}
+        self.replacements.update({value.encode(): b'<redacted>' for value in secrets if value})
+        values = sorted(self.replacements, key=len, reverse=True)
         self.pattern = re.compile(b'|'.join(re.escape(value) for value in values)) if values else None
         self.values = values
         self.pending = b''
@@ -45,7 +47,7 @@ class Redactor:
             if match.start() < boundary:
                 boundary = max(boundary, match.end())
         prefix, self.pending = self.pending[:boundary], self.pending[boundary:]
-        return self.pattern.sub(b'<redacted>', prefix)
+        return self.pattern.sub(lambda match: self.replacements[match.group()], prefix)
 
 
 @dataclass(frozen=True)
@@ -76,10 +78,11 @@ class _Output:
         callback: Callable[[str], None] | None,
         routing: Callable[[str, str], None] | None = None,
         log_stdout: bool = True,
+        path_aliases: dict[str, str] | None = None,
     ) -> None:
         """Initialize per-stream redactors and callback diagnostics."""
         self.output = output
-        self.redactors = {name: Redactor(secrets) for name in ('stdout', 'stderr')}
+        self.redactors = {name: Redactor(secrets, path_aliases) for name in ('stdout', 'stderr')}
         self.line_buffer = b''
         self.routing = routing
         self.routed_buffers = {'stdout': b'', 'stderr': b''}
@@ -222,6 +225,7 @@ def run_process(
     on_start: Callable[[], None] | None = None,
     on_output: Callable[[str, str], None] | None = None,
     log_stdout: bool = True,
+    path_aliases: dict[str, str] | None = None,
 ) -> ProcessResult:
     """Run an owned process group and preserve partial, redacted output.
 
@@ -242,6 +246,7 @@ def run_process(
             Replaces log and on_stdout delivery; failures add warnings and routing
             continues, including final unterminated lines.
         log_stdout: Include stdout in the log when on_output is absent.
+        path_aliases: Replace private native paths in logs and events with display aliases.
 
     Returns:
         Exit code, elapsed seconds and warnings, with status completed, error,
@@ -269,7 +274,7 @@ def run_process(
         readers = {pipe.fileno(): pipe for pipe in (process.stdout, process.stderr)}
         selector.register(process.stdout, selectors.EVENT_READ, 'stdout')
         selector.register(process.stderr, selectors.EVENT_READ, 'stderr')
-        streams = _Output(output, secrets or [], on_stdout, on_output, log_stdout)
+        streams = _Output(output, secrets or [], on_stdout, on_output, log_stdout, path_aliases)
         try:
             if on_start is not None:
                 on_start()

@@ -16,7 +16,7 @@ from benchmark.execution.opencode import EventTracker, Invocation
 from benchmark.execution.process import ProcessResult
 from benchmark.execution.provider_errors import ERROR_PRIORITY, FATAL_PROVIDER_CODES, classify_provider_error
 from benchmark.execution.provisioning import Runtime
-from benchmark.execution.sandbox import Sandbox
+from benchmark.execution.backends import sandbox_type
 from benchmark.execution.telemetry import capture_telemetry, unavailable_telemetry
 from benchmark.metrics.process import score_saved
 from benchmark.models.base import WireModel
@@ -214,6 +214,9 @@ class _Attempt:
         """Capture source and usage exactly once before sealing and host scoring."""
         with TemporaryDirectory(prefix='benchmark-attempt-') as temporary:
             self.private = Path(temporary)
+            if self.config.data.sandbox.backend == 'seatbelt':
+                self.command.add_secret(str(self.private.resolve()))
+                self.command.add_secret(str(self.private))
             try:
                 if self.stop.is_set():
                     raise BenchmarkError(
@@ -266,7 +269,7 @@ class _Attempt:
         auth = _oauth(self.config, before_setup=True, cancel=self.stop)
         if auth is not None:
             self.command.add_secret(json.loads(auth)['openai']['access'])
-        self.sandbox = sandbox = Sandbox(
+        self.sandbox = sandbox = sandbox_type(self.config.data.sandbox.backend)(
             str(self.bwrap),
             self.workspace.root,
             self.workspace.cwd,
@@ -274,6 +277,7 @@ class _Attempt:
             self.private / 'runtime',
             self.runtime.binary,
             self.runtime.python,
+            **({'git': self.runtime.git} if self.config.data.sandbox.backend == 'seatbelt' else {}),
         )
         if self.report_identity.python_runtime is None:
             raise BenchmarkError('python_runtime_missing', 'Attempt requires frozen Python provenance.')
@@ -297,7 +301,7 @@ class _Attempt:
             on_quota=self.quota_stop,
         )
         self.prompt = self.invocation.prepare(self.row.agent_task)
-        for value in self.invocation.secrets():
+        for value in [*self.invocation.secrets(), *sandbox.public_paths]:
             self.command.add_secret(value)
         self.command.phase('setup', self.row.id)
         result = self.invocation.setup(self.stop)

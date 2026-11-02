@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,8 @@ from benchmark.models.runtime import PythonFile, PythonReceipt
 @pytest.fixture(scope='module')
 def base_python(tmp_path_factory: pytest.TempPathFactory) -> PythonRuntime:
     """Share only the immutable Python base across isolation tests."""
+    if platform.system() != 'Linux':
+        pytest.skip('Linux namespace/bin-projection integration; native Python has its own integration tests')
     return prepare_python(tmp_path_factory.mktemp('python-base'))
 
 

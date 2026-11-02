@@ -111,9 +111,11 @@ def portable_native(native: JsonObject, *, runtime_root: str = '/benchmark-runti
         for index, value in enumerate(values):
             if not isinstance(value, str):
                 continue
-            prefix = ('file://' if plugin else '') + runtime_root + '/'
-            if value.startswith(prefix + 'resources/'):
-                values[index] = ('file://' if plugin else '') + value.removeprefix(prefix)
+            for root in {runtime_root, '/benchmark-runtime'}:
+                prefix = ('file://' if plugin else '') + root + '/'
+                if value.startswith(prefix + 'resources/'):
+                    values[index] = ('file://' if plugin else '') + value.removeprefix(prefix)
+                    break
     return result
 
 

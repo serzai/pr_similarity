@@ -1,0 +1,34 @@
+schema_version: 1
+# Experimental native backend; see ../docs/macos.md for tested prerequisites.
+# First: make auth CONFIG=examples/macos.yaml
+# The private profile stays outside output and is never archived.
+# Select a model available through your ChatGPT subscription.
+workers: 1
+tags: [baseline]
+agent:
+  name: baseline
+  runtime: opencode:v1.18.33
+  auth:
+    mode: chatgpt_oauth
+    profile: ~/.local/share/prsimbm/chatgpt
+  config:
+    opencode_json:
+      model: openai/gpt-6.1-sol
+      provider:
+        openai:
+          models:
+            gpt-6.1-sol:
+              options:
+                reasoningEffort: medium
+      permission:
+        '*': allow
+  timeout_seconds: 1800
+  retries:
+    max_retries: 1
+    categories: []
+  credentials: {}
+
+sandbox:
+  backend: seatbelt
+  executable: /usr/bin/sandbox-exec
+  auto_install: false

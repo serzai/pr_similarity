@@ -1,9 +1,12 @@
 # Native macOS implementation plan
 
-Status: provisioning, native launch, isolated Python and supervised teardown implemented; benchmark runs
-remain Linux x64/glibc only. Work is on the contributor fork `serzai/pr_similarity`,
-branch `codex/native-macos-foundation`; the original repository is `upstream`.
-This is a development plan, not a macOS quick start.
+Status: the explicit experimental Seatbelt backend is integrated into the
+coordinator and attempts. Native offline setup, fake-agent execution, scoring,
+resume and archive import work on macOS 26.1 ARM64/python.org Python 3.12.0.
+Linux remains the production baseline; Intel, Homebrew and hosted-runner matrix
+validation are still open. Work is on the fork `serzai/pr_similarity`, branch
+`codex/native-macos-foundation`; the original repository is `upstream`.
+Use [native setup](macos.md) for the experimental run configuration.
 
 ## Goal and acceptance criteria
 
@@ -67,9 +70,8 @@ Python/sandbox contract. A downloaded Darwin executable alone is insufficient.
 ### 3. Separate launch paths from Linux mount paths
 
 - [x] Add backend-owned command/environment/preflight behavior and an explicit
-  process path layout. `SeatbeltSandbox` is a development prototype sharing the
-  existing launcher interface. Its Python methods bootstrap and validate native
-  private venvs; runner selection remains gated on coordinator/evidence integration.
+  process path layout. `SeatbeltSandbox` owns native paths and lifecycle throughout
+  coordinator preflight, setup, diagnostics, Python probes and agent attempts.
 - [x] Complete the backend interface with native Python preparation/probes and
   descendant cleanup. Setup, diagnostics and agent launches use backend-owned
   execution. Keep Linux configuration defaults unchanged.
@@ -78,9 +80,9 @@ Python/sandbox contract. A downloaded Darwin executable alone is insufficient.
   `/sandbox-home`; use a dedicated canonical attempt directory on macOS.
 - [x] Route setup scripts, copied native resources, plugin URIs, agent commands,
   effective config normalization and resource evidence lookup through the layout.
-- [ ] Finish native Python path handling, backend selection in the coordinator
-  and explicit native MCP/tool examples; audit their ownership together.
-- [ ] Add an explicit macOS backend choice with early host validation. Preserve
+- [x] Integrate native Python paths and backend selection in the coordinator.
+- [ ] Add explicit native MCP/tool bundles beyond the private Python/Git runtime.
+- [x] Add an explicit macOS backend choice with early host validation. Preserve
   isolation identity in sandbox receipts and reject cross-backend resume.
 
 The prototype allows only dedicated writable source/HOME/temp roots and readonly
@@ -113,8 +115,9 @@ files currently live in a private attempt directory, not a Linux tmpfs.
   shadowing, separate attempt packages, deterministic snapshots and preparation
   cancellation. Verify Python setup, fake-agent events and durable native probes
   together, including paths with spaces, Unicode and quotes.
-- [ ] Validate compiled dependencies, retries, concurrent native attempts and
-  complete run cleanup through the coordinator after its native backend gate opens.
+- [x] Validate resumed fresh attempts, two simultaneous native workers, separate
+  venv/source/usage and complete archive evidence through the real coordinator.
+- [ ] Validate compiled target dependencies and SDK/compiler tool bundles.
 
 ### 5. Evidence contracts and consumers
 
@@ -126,22 +129,25 @@ files currently live in a private attempt directory, not a Linux tmpfs.
   runtime platform; mixed path families are rejected.
 - [x] Define migration/version rules before changing persisted formats. Keep old
   Linux reports readable and do not rewrite existing baskets or completed runs.
-- [ ] Ensure resume detects changed backend, Python build and runtime identity;
-  ensure published evidence does not disclose credentials or private host paths.
-  The Python resume guard now compares platform identity, with a regression for
-  identical Python bytes across platforms. Successful native probe output and
-  logs contain portable identifiers. Full native launcher/log/traceback
-  redaction and archive roundtrip remain to be validated.
+- [x] Compare backend, policy/OS/Git identity, Python platform/content and pinned
+  runtime before resuming native work. Normalize private native paths in logs,
+  events, launch metadata and legacy resource copies; cover Unicode/JSON escaping
+  and retain credential checks before alias transformation. Public archives pass
+  the independent viewer validator and local mock API. Operator-declared config
+  paths and host DEBUG traceback locations retain the existing archive contract;
+  this is not a claim that every absolute operator path is removed.
 
 ### 6. End-to-end validation and MR readiness
 
-- [ ] Add a hermetic fake OpenCode workflow on macOS: setup, edits, event/usage
+- [x] Add a hermetic fake OpenCode workflow on macOS: setup, edits, event/usage
   evidence, score, report, HTML, resume and archive import into the viewer.
 - [ ] Run `make test` and `make smoke` on Linux x64 and supported macOS ARM64/x64.
   Separate host-independent tests from actual backend integration tests; do not
   globally skip failures merely because the host is macOS.
-- [ ] Add CI jobs and document tested OS versions, Python installations,
-  toolchain visibility and known Seatbelt limitations.
+- [x] Add CI jobs for Linux x64, macOS ARM64 and macOS Intel, pinned to exact
+  official action commits; document tested installations and toolchain limits.
+- [ ] Obtain successful results from all hosted-runner jobs; configuration alone
+  is not validation of Intel, Homebrew or headless launchd behavior.
 - [ ] Update prerequisites, examples, changelog and the synchronized release
   inventory when preparing the completed release.
 - [ ] Prepare the MR description with behavior, isolation guarantees and exact
@@ -276,3 +282,61 @@ integration through the still-Linux coordinator. Bounded `make test` again reach
 12 passed before the archive crash/recovery fixture failed at bubblewrap
 provisioning. These full-suite failures remain open; native lifecycle checks do
 not substitute for Linux or full-run validation.
+
+
+## Coordinator and public evidence checkpoint
+
+`backend: seatbelt` now selects the native class in both coordinator and attempt
+execution. Linux defaults are unchanged, wrong-host selection fails before
+credentials/provisioning, and Seatbelt requires the system executable without
+auto-installation. A new focused example and native guide describe actual paths,
+display aliases, PATH-based Python/Git entrypoints and remaining SDK/tool limits.
+
+The full offline workflow passed for basket v1/v2/v3, including setup, agent edits,
+SQLite usage, scoring, moving a completed run, resume, rescore/reprice and archive
+verification. The archive test rejects leaked attempt/preflight path prefixes.
+Five SIGKILL/recovery boundaries passed for basket v3. After adding private Git,
+the current-basket workflow and live-agent SIGKILL/recovery both passed again.
+Native Python lifecycle checks passed all 11 tests, including bootstrap timeout,
+cancellation, no inherited packages and disposal of owned processes/HOME. Fifty
+scheduler/backend tests pass with explicit sandbox substitutes for scheduler-only
+fixtures; actual isolation remains covered by integration tests.
+
+A real Git check caught Apple's `/usr/bin/git` shim requiring inaccessible Xcode
+paths. Native preparation now copies only the actual Apple Git binary, HTTP
+helpers and builtin entrypoints, verifies system-only Mach-O dependencies and
+content-addresses the snapshot. Each attempt receives readonly copies and private
+Git environment controls. The snapshot digest is part of the sandbox identity,
+so an updated toolchain cannot silently resume earlier native work. No developer
+or Homebrew directory was added to the sandbox read allowlist.
+
+The independent viewer accepted a newly generated macOS archive, published it to
+local mock storage and served all base/human/agent role-pair APIs. Historical and
+probe/model/archive checks also passed. No live model request, external account
+change or external publication was performed. Full Make/CI results are recorded
+below once available; Linux-only namespace tests are explicitly marked, while
+portable cache/contract/scheduler tests continue to run on macOS.
+
+
+ARM64 validation on the integrated backend:
+
+- `make smoke`: 545 passed, 37 skipped (Linux namespace/bin-projection cases and
+  optional real-binary checks). No failures.
+- Full `make test`: 850 passed, 37 skipped, one failure in a bubblewrap fallback
+  unit fixture that omitted its Linux host assumption. The fixture now explicitly
+  models Linux x64; all 12 tests in that module pass on rerun. This is not a claim
+  of a subsequently repeated all-green full suite.
+- Two real concurrent coordinator attempts: passed with separate source/venvs,
+  16 tokens and synthetic USD 0.5 per attempt, and a complete validated archive.
+- A bounded `git ls-remote` against the public contributor fork succeeded inside
+  Seatbelt using the private HTTP helper without host Git credentials. This was
+  separate from offline fixtures; no model request or write to GitHub occurred.
+- Native path tests: 23 passed, one optional real-binary skip; include JSON-escaped
+  Unicode/quotes, parent-directory aliases and secret checks before aliasing.
+
+CI is configured for full regression/smoke and independent archive-consumer checks
+on Ubuntu 24.04 x64, macOS 15 ARM64 and macOS 15 Intel. Actions are pinned to the
+verified v7 commits. Runner labels follow the
+[GitHub runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Hosted results remain pending until the workflow has run; local ARM64 results do
+not validate those other installations.

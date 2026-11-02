@@ -59,9 +59,9 @@ class AgentConfiguration(WireModel):
 
 
 class SandboxConfiguration(WireModel):
-    """Configure the existing source-only bubblewrap boundary."""
+    """Select an explicit source-only platform backend."""
 
-    backend: Literal['bubblewrap']
+    backend: Literal['bubblewrap', 'seatbelt']
     executable: str
     auto_install: bool
 

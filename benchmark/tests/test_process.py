@@ -263,3 +263,12 @@ def test_redactor_preserves_secrets_at_every_chunk_boundary() -> None:
         result = redactor.feed(content[:boundary]) + redactor.feed(content[boundary:]) + redactor.feed(b'', final=True)
         assert b'token-value' not in result
         assert result.startswith(b'prefix ') and result.endswith(b' suffix\n')
+
+
+def test_native_path_aliases_stream_across_chunks_and_secrets_take_priority() -> None:
+    private = '/private/tmp/attempt-123/home'
+    redactor = Redactor([private + '/secret-value'], {private: '/sandbox-home'})
+    assert redactor.feed(b'prefix /private/tmp/attempt-') == b'prefix '
+    assert redactor.feed(b'123/home/.venv\n') == b'/sandbox-home/.venv\n'
+    assert redactor.feed((private + '/secret-').encode()) == b''
+    assert redactor.feed(b'value\n', final=True) == b'<redacted>\n'

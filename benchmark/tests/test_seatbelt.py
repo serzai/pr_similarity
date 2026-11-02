@@ -192,3 +192,12 @@ def test_native_network_is_shared_without_host_unix_sockets(policy: SeatbeltPoli
         server.listen()
         result = invoke(policy, 'printf hello | nc -U -w 1 "$1"', str(path))
         assert result.returncode != 0
+
+
+@native
+def test_hardlinks_do_not_bypass_readonly_runtime(policy: SeatbeltPolicy) -> None:
+    protected = policy.runtime / 'protected'
+    protected.write_text('unchanged')
+    result = invoke(policy, 'ln "$1" "$HOME/linked" && printf changed > "$HOME/linked"', str(protected))
+    assert result.returncode != 0
+    assert protected.read_text() == 'unchanged'

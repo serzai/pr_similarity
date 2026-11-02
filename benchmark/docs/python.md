@@ -90,6 +90,7 @@ native paths at execution time, then stores `@attempt/home/.venv` and
 paths. Producers and the viewer reject mixed path families and mismatched runtime
 platforms. Old Linux probe documents remain readable without being rewritten.
 
-Preparation and setup probes work independently of the remaining native runner
-gates. `make run` still selects the Linux executor until coordinator/evidence
-integration and the complete run/resume/publication workflow pass their integration checks.
+The explicit `seatbelt` backend now uses this runtime throughout the coordinator
+and attempts. Offline setup, fake-agent execution, scoring, resume and archive
+validation pass on the tested ARM64 host; see [native setup](macos.md). The default
+config continues to select Linux bubblewrap.

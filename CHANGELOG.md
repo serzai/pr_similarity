@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Add an explicit experimental macOS Seatbelt backend, Darwin OpenCode assets,
+  a relocated package-free Python 3.12 and a content-verified Apple Git snapshot.
+- Supervise native processes in private launchd coalitions, including detached
+  descendants, timeout/cancellation and coordinator failure; retain Linux defaults.
+- Use portable native Python probes and display aliases for private execution
+  paths. Keep existing Linux probe bytes readable and reject platform/isolation
+  mismatches when resuming native work.
+
+
 ## 0.3.3
 
 - Show known request-level token and cost subtotals inside incomplete final

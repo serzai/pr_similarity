@@ -2,6 +2,7 @@
 
 import json
 import os
+import platform
 import subprocess
 import threading
 import time
@@ -12,6 +13,10 @@ from benchmark.errors import BenchmarkError
 from benchmark.execution.sandbox import Sandbox
 
 
+linux = pytest.mark.skipif(platform.system() != 'Linux', reason='bubblewrap integration')
+
+
+@linux
 def test_namespace_hides_sibling_reference_and_host_home(tmp_path: Path) -> None:
     """Verify namespace hides sibling reference and host home."""
     source = tmp_path / 'source'
@@ -39,6 +44,7 @@ def test_namespace_hides_sibling_reference_and_host_home(tmp_path: Path) -> None
     assert data == {'ref': False, 'host_home': False, 'source': 'before'}
 
 
+@linux
 def test_setup_home_persists_and_source_writes_are_visible(tmp_path: Path) -> None:
     """Verify setup home persists and source writes are visible."""
     source = tmp_path / 'source'
@@ -75,6 +81,7 @@ def test_no_network_namespace_and_no_secret_argv(tmp_path: Path) -> None:
     assert 'TEST_SECRET' not in ' '.join(command)
 
 
+@linux
 def test_open_code_runs_inside_namespace(tmp_path: Path) -> None:
     """Verify open code runs inside namespace."""
     runtime_path = os.environ.get('BENCHMARK_TEST_OPENCODE')
@@ -97,6 +104,7 @@ def test_open_code_runs_inside_namespace(tmp_path: Path) -> None:
     assert result.stdout.strip() == '1.18.33'
 
 
+@linux
 def test_preflight_creates_private_mount_directories(tmp_path: Path) -> None:
     """Verify preflight creates private mount directories."""
     source = tmp_path / 'source'
@@ -145,6 +153,7 @@ def test_alternatives_mount_is_optional_and_readonly(
     assert not any(mount[2] == '/etc' for mount in mounts)
 
 
+@linux
 def test_alternatives_restores_library_loading(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Load the same library through an alternatives chain and enforce a readonly mount."""
     source = tmp_path / 'source'

@@ -16,7 +16,7 @@ from benchmark.execution.agent_input import freeze_agent_input, portable_native
 from benchmark.execution.opencode import Invocation
 from benchmark.execution.paths import ExecutionPaths
 from benchmark.execution.macos_processes import NativeProcesses
-from benchmark.execution.process import ProcessResult, run_process
+from benchmark.execution.process import ProcessResult, Redactor, run_process
 from benchmark.execution.seatbelt import SeatbeltSandbox
 from benchmark.persistence.storage import read_json
 
@@ -313,3 +313,35 @@ int main(int argc, char **argv) {
         # A bare PID from the fixture file could already belong to an unrelated process.
         for coalition in set(coalitions):
             cleanup(NativeProcesses(), coalition)
+
+
+def test_public_path_aliases_do_not_hide_a_declared_secret(
+    sandbox: SeatbeltSandbox, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules = tmp_path / 'rules.md'
+    rules.write_text('fixture rule')
+    secret = sandbox.paths.runtime
+    rules.write_text(secret)
+    monkeypatch.setenv('NATIVE_TEST_KEY', secret)
+    config_path = tmp_path / 'private.yaml'
+    config_path.write_text(yaml.safe_dump({
+        'schema_version': 1,
+        'agent': {
+            'name': 'fixture', 'runtime': 'opencode:v1.18.33',
+            'credentials': {'FIXTURE_KEY': 'NATIVE_TEST_KEY'},
+            'config': {'opencode_json': {'instructions': [str(rules)]}},
+        },
+    }))
+    invocation = Invocation(load_config(config_path), sandbox, tmp_path / 'artifacts', tmp_path / 'logs')
+    with pytest.raises(BenchmarkError) as error:
+        invocation.prepare('fixture task')
+    assert error.value.code == 'resource_secret'
+    assert not (tmp_path / 'artifacts/runtime/resources/0-0-0/rules.md').exists()
+
+
+@pytest.mark.parametrize('ascii_only', [False, True])
+def test_native_path_aliases_cover_json_escaping(sandbox: SeatbeltSandbox, ascii_only: bool) -> None:
+    value = {'path': sandbox.paths.home + '/nested.py', 'parent': str(sandbox.home.resolve().parent)}
+    encoded = json.dumps(value, ensure_ascii=ascii_only).encode()
+    safe = Redactor([], sandbox.public_paths).feed(encoded, final=True)
+    assert json.loads(safe) == {'path': '/sandbox-home/nested.py', 'parent': '@attempt'}

@@ -1,6 +1,7 @@
 """Python preparation failures and runtime identity gates never invoke a model."""
 
 import hashlib
+import platform
 import signal
 import subprocess
 import threading
@@ -68,8 +69,11 @@ def test_setup_damage_fails_before_native_diagnostics(tmp_path: Path, monkeypatc
     log = next((directory / 'tasks').glob('*/attempts/*/python-check.log'))
     assert 'Attempt prefix changed' in log.read_text()
     assert not list((directory / 'tasks').glob('*/attempts/*/effective-config.receipt.json'))
-    assert len(projection_roots) == 1
-    assert not projection_roots[0].exists()
+    if config.data.sandbox.backend == 'bubblewrap':
+        assert len(projection_roots) == 1
+        assert not projection_roots[0].exists()
+    else:
+        assert not projection_roots
     assert not list(directory.rglob('bin-1'))
 
 
@@ -163,7 +167,7 @@ def test_python_preparation_stops_children_and_removes_home(
     descendants: list[int] = []
     stop = threading.Event()
 
-    def observe(child: subprocess.Popen[bytes]) -> None:
+    def observe(child: subprocess.Popen[bytes], argv: list[str]) -> None:
         """Record only test-owned descendants and request cancellation when selected."""
         time.sleep(observation_delay)
         deadline = time.monotonic() + 30
@@ -172,15 +176,21 @@ def test_python_preparation_stops_children_and_removes_home(
                 raise AssertionError('Bootstrap did not reach its startup marker.')
             time.sleep(0.02)
         assert child.poll() is None
-        pending = [child.pid]
-        for _ in range(4):
-            following = []
-            for pid in pending:
-                path = Path(f'/proc/{pid}/task/{pid}/children')
-                if path.exists():
-                    following.extend(int(value) for value in path.read_text().split())
-            descendants.extend(following)
-            pending = following
+        if platform.system() == 'Darwin':
+            from benchmark.execution.macos_processes import NativeProcesses
+
+            guardian = read_json(Path(argv[5]) / 'guardian.json')
+            descendants.extend(item.pid for item in NativeProcesses().members(guardian['coalition']))
+        else:
+            pending = [child.pid]
+            for _ in range(4):
+                following = []
+                for pid in pending:
+                    path = Path(f'/proc/{pid}/task/{pid}/children')
+                    if path.exists():
+                        following.extend(int(value) for value in path.read_text().split())
+                descendants.extend(following)
+                pending = following
         assert descendants
         if mode == 'cancel':
             assert isinstance(stop, Stop)
@@ -194,7 +204,7 @@ def test_python_preparation_stops_children_and_removes_home(
             observed = False
             try:
                 # The supervisor cannot evaluate its deadline until this hook returns.
-                observe(child)
+                observe(child, argv)
                 observed = True
             finally:
                 if not observed:
@@ -217,7 +227,7 @@ def test_python_preparation_stops_children_and_removes_home(
             assert cancel is not None
             stop = cancel
             homes.append(self.home)
-            argv = ['/bin/sh', '-c', 'echo "bootstrap started"; touch /sandbox-home/bootstrap-started; exec sleep 60']
+            argv = ['/bin/sh', '-c', 'echo "bootstrap started"; touch "$HOME/bootstrap-started"; exec sleep 60']
             # An expired deadline is evaluated only after the live descendants are recorded.
             timeout = 60 if mode == 'cancel' else 0
         return original_probe(self, argv, timeout=timeout, cancel=cancel, log=log, bindings=bindings)

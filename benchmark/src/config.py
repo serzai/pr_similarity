@@ -270,7 +270,11 @@ def load_config(path: Path, *, workers: int | None = None) -> RunConfig:
     if not isinstance(data, dict):
         raise BenchmarkError('invalid_config', 'Run config must contain a YAML mapping.')
     _json_values(data)
-    _fill_defaults(data, _defaults())
+    defaults = _defaults()
+    sandbox = data.get('sandbox')
+    if isinstance(sandbox, dict) and sandbox.get('backend') == 'seatbelt':
+        defaults['sandbox'] = {'backend': 'seatbelt', 'executable': '/usr/bin/sandbox-exec', 'auto_install': False}
+    _fill_defaults(data, defaults)
     if workers is not None:
         data['workers'] = workers
     agent = data.get('agent')
@@ -280,6 +284,12 @@ def load_config(path: Path, *, workers: int | None = None) -> RunConfig:
     settings = Configuration.model_validate(data)
     if any(not tag.strip() or any(ord(char) < 32 or ord(char) == 127 for char in tag) for tag in settings.tags):
         raise BenchmarkError('invalid_tags', 'YAML tags must be nonempty strings without control characters.')
+    if settings.sandbox.backend == 'seatbelt' and (
+        settings.sandbox.auto_install or settings.sandbox.executable not in ('sandbox-exec', '/usr/bin/sandbox-exec')
+    ):
+        raise BenchmarkError(
+            'invalid_sandbox', 'Seatbelt requires system sandbox-exec and sandbox.auto_install=false.'
+        )
     directory = resolved.parent
     agent = settings.agent
     overlap = set(agent.env) & set(agent.credentials)

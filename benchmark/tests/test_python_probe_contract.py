@@ -78,11 +78,13 @@ def test_resume_rejects_platform_change_even_when_python_bytes_match(
         selector='opencode:v1.18.33', actual_version='1.18.33', asset_name='fixture', platform='fixture',
         archive_sha256='a' * 64, binary_sha256='b' * 64,
     ))
+    monkeypatch.setattr(coordinator, 'validate_backend_host', lambda *_args: None)
     monkeypatch.setattr(coordinator, 'provision_opencode', lambda *_args, **_kwargs: runtime)
     monkeypatch.setattr(coordinator, 'prepare_python', lambda *_args, **_kwargs: PythonRuntime(tmp_path, current))
     owner = SimpleNamespace(
         config=SimpleNamespace(credential_environment=lambda: {}, data=SimpleNamespace(
             agent=SimpleNamespace(runtime='opencode:v1.18.33'),
+            sandbox=SimpleNamespace(backend='bubblewrap'),
             provisioning=SimpleNamespace(cache_dir=str(tmp_path / 'cache'), download_timeout_seconds=1),
         )),
         command=SimpleNamespace(phase=lambda *_args: None), stop=threading.Event(), run_dir=tmp_path,

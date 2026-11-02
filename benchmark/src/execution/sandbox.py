@@ -122,6 +122,11 @@ class Sandbox:
         args.extend(['--', *argv])
         return args
 
+    @property
+    def public_paths(self) -> dict[str, str]:
+        """Linux process paths already use the public namespace."""
+        return {}
+
     def run_process(self, argv: list[str], **options: Any) -> ProcessResult:
         """Own the complete backend lifecycle, not only command construction."""
         return run_process(self.command(argv), **options)

@@ -21,9 +21,10 @@ from benchmark.errors import OPERATION_ERRORS, BenchmarkError
 from benchmark.execution.auth import auth_snapshot
 from benchmark.execution.bin_projection import BinProjection
 from benchmark.execution.bubblewrap import resolve_bubblewrap
+from benchmark.execution.backends import resolve_seatbelt, sandbox_type, validate_backend_host
+from benchmark.execution.macos_git import prepare_macos_git
 from benchmark.execution.provisioning import Runtime, provision_opencode
 from benchmark.execution.python_runtime import prepare_python
-from benchmark.execution.sandbox import Sandbox
 from benchmark.metrics.scoring import diagnostic_metrics, metric_receipt
 from benchmark.models import Report, ReportDraft
 from benchmark.models.base import WireModel
@@ -435,6 +436,7 @@ class Coordinator:
 
     def prepare_agents(self) -> None:
         """Verify credentials, pinned executable and private source-only sandbox for native issuance."""
+        validate_backend_host(self.config.data.sandbox.backend)
         self.config.credential_environment()
         self.command.phase('provisioning/cache-wait')
         runtime = provision_opencode(
@@ -460,7 +462,13 @@ class Coordinator:
         elif self.resumed and any(task.attempt is not None for task in self.store.state.tasks):
             raise BenchmarkError('resume_python_missing', 'Run has no Python provenance; start a new run.')
         python = replace(python, bins=BinProjection(cancel=self.stop))
-        self.runtime = replace(runtime, python=python)
+        git = (prepare_macos_git(Path(self.config.data.provisioning.cache_dir), cancel=self.stop)
+               if self.config.data.sandbox.backend == 'seatbelt' else None)
+        self.runtime = replace(runtime, python=python, git=git)
+        if self.config.data.sandbox.backend == 'seatbelt':
+            self.command.add_secret(str(python.root.resolve()))
+            if git is not None:
+                self.command.add_secret(str(git.resolve()))
         write_json(self.run_dir / '_meta/runtime.json', runtime.receipt)
         self.report = self.store.snapshot()
         self.report.agent.resolved_runtime = ReportAgentResolvedRuntime(
@@ -480,21 +488,26 @@ class Coordinator:
         self.persist()
 
     def prepare_sandbox(self) -> None:
-        """Retain bubblewrap isolation identity and cover setup plus native OAuth lifetime."""
+        """Verify and retain platform isolation before setup or native OAuth use."""
         assert self.runtime is not None
         self.command.phase('sandbox-check')
-        self.bwrap = resolve_bubblewrap(
-            self.config.data.sandbox.executable,
-            Path(self.config.data.provisioning.cache_dir),
-            auto_install=self.config.data.sandbox.auto_install,
-            timeout=self.config.data.provisioning.download_timeout_seconds,
-            cancel=self.stop,
-            on_notice=lambda text: self.command.message(text, level='WARNING'),
-        )
+        if self.config.data.sandbox.backend == 'seatbelt':
+            self.bwrap = resolve_seatbelt(self.config.data.sandbox.executable)
+        else:
+            self.bwrap = resolve_bubblewrap(
+                self.config.data.sandbox.executable,
+                Path(self.config.data.provisioning.cache_dir),
+                auto_install=self.config.data.sandbox.auto_install,
+                timeout=self.config.data.provisioning.download_timeout_seconds,
+                cancel=self.stop,
+                on_notice=lambda text: self.command.message(text, level='WARNING'),
+            )
         with TemporaryDirectory(prefix='benchmark-preflight-') as temporary:
             root = Path(temporary)
             (root / 'source').mkdir()
-            sandbox = Sandbox(
+            if self.config.data.sandbox.backend == 'seatbelt':
+                self.command.add_secret(str(root.resolve()))
+            sandbox = sandbox_type(self.config.data.sandbox.backend)(
                 str(self.bwrap),
                 root / 'source',
                 root / 'source',
@@ -502,6 +515,7 @@ class Coordinator:
                 root / 'runtime',
                 self.runtime.binary,
                 self.runtime.python,
+                **({'git': self.runtime.git} if self.config.data.sandbox.backend == 'seatbelt' else {}),
             )
             resolved = sandbox.preflight(cancel=self.stop)
             try:
@@ -511,8 +525,9 @@ class Coordinator:
             saved_path = artifact_path(self.run_dir, '_meta/sandbox.json')
             if self.resumed and saved_path.is_file():
                 saved = read_reference(self.run_dir, reference(self.run_dir, '_meta/sandbox.json'), SandboxReceipt)
-                if (saved.backend, saved.binary_sha256, saved.network) != (
+                if (saved.backend, saved.version, saved.binary_sha256, saved.network) != (
                     resolved.backend,
+                    resolved.version,
                     resolved.binary_sha256,
                     resolved.network,
                 ):

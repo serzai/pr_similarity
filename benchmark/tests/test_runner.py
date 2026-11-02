@@ -113,6 +113,12 @@ def provision_fixture(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
         ),
     )
     monkeypatch.setattr(coordinator, 'provision_opencode', lambda *_args, **_kwargs: runtime)
+    # Scheduler fixtures replace native execution; they must not depend on a host sandbox.
+    monkeypatch.setattr(coordinator, 'validate_backend_host', lambda *_args: None)
+    monkeypatch.setattr(coordinator, 'resolve_bubblewrap', lambda *_args, **_kwargs: Path('/usr/bin/true'))
+    monkeypatch.setattr(Sandbox, 'preflight', lambda *_args, **_kwargs: SandboxReceipt(
+        backend='bubblewrap', version='fixture', binary_sha256='b' * 64, network='shared',
+    ))
     monkeypatch.setattr(
         coordinator, 'prepare_python', lambda *_args, **_kwargs: PythonRuntime(Path('/usr'), python_receipt())
     )
@@ -843,6 +849,7 @@ def test_preflight_interrupt_stays_interrupted_with_pending_queue(
         cancel.signal(2, None)
         raise BenchmarkError('operation_cancelled', 'Preparation interrupted.', exit_code=130)
 
+    monkeypatch.setattr(coordinator, 'validate_backend_host', lambda *_args: None)
     monkeypatch.setattr(coordinator, 'provision_opencode', interrupted)
     code, directory = run(config, basket, output=tmp_path / 'runs')
     report = Report.model_validate(read_json(directory / 'report.json'))

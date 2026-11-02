@@ -18,7 +18,8 @@ Start with [setup and login](#quick-start), then use the guide for your next tas
 ## Prerequisites
 
 - **Linux x64 with glibc**, **Python 3.12** with venv/pip support, **GNU Make**,
-  **Git** and **Bash**. Other platforms are outside the current runtime adapter.
+  **Git** and **Bash**. The experimental macOS alternative has its own
+  [prerequisites](docs/macos.md).
 - **Bubblewrap** (`bwrap`) with working unprivileged user namespaces. The runner
   checks the sandbox before starting agents. Containers and restricted hosts
   must allow user namespaces; installing the binary alone is insufficient.
@@ -39,12 +40,11 @@ Start with [setup and login](#quick-start), then use the guide for your next tas
 OpenCode does not need a separate installation: the runner downloads and caches
 `agent.runtime` from your config, then records it with the run.
 
-Native macOS execution is being developed in [stages](docs/native-macos-plan.md).
-The OpenCode provisioner can select and verify Darwin ARM64/x64 ZIP assets, but
-the normal agent runner still requires Linux. Experimental setup preparation now
-relocates a package-free macOS Python and verifies a clean venv; this has been
-tested with python.org Python 3.12 on macOS ARM64. Native `make run` remains gated
-on coordinator/evidence integration and end-to-end validation. See the [native Python notes](docs/python.md#experimental-native-macos-python).
+Experimental native macOS execution is available through
+[examples/macos.yaml](examples/macos.yaml). It uses Seatbelt, a private Python 3.12
+and a verified Apple Git snapshot. See [native macOS setup and limitations](docs/macos.md)
+for tested prerequisites and the [implementation plan](docs/native-macos-plan.md)
+for remaining validation. Linux remains the production baseline.
 
 ## Quick start
 
@@ -148,6 +148,7 @@ Native OpenCode integrations have their own fields; see the
 
 | Config | Access | What to configure |
 |---|---|---|
+| [macos.yaml](examples/macos.yaml) | ChatGPT OAuth, native macOS | Experimental Seatbelt backend; see [native prerequisites](docs/macos.md) |
 | [openai-api-key.yaml](examples/openai-api-key.yaml) | OpenAI API, native SDK | `OPENAI_API_KEY` and an available model |
 | [chatgpt-oauth.yaml](examples/chatgpt-oauth.yaml) | ChatGPT subscription OAuth | Short baseline recipe; login with `make auth CONFIG=examples/chatgpt-oauth.yaml` |
 | [openai-endpoint.yaml](examples/openai-endpoint.yaml) | Custom OpenAI endpoint, native SDK | Replace the example baseURL; set `OPENAI_API_KEY` and the model |

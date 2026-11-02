@@ -208,7 +208,7 @@
       "type": "object",
       "properties": {
         "backend": {
-          "const": "bubblewrap"
+          "enum": ["bubblewrap", "seatbelt"]
         },
         "executable": {
           "type": "string",
