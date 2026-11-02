@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from benchmark.errors import BenchmarkError
 from benchmark.execution.cancellation import check_cancelled
 from benchmark.execution.process import run_process
+from benchmark.execution.paths import ExecutionPaths
 from benchmark.execution.python_runtime import (
     PYTHON_CONTROLS,
     PYTHON_ROOT,
@@ -34,6 +35,11 @@ class Sandbox:
     runtime_files: Path
     binary: Path
     python: PythonRuntime | None = None
+
+    @property
+    def paths(self) -> ExecutionPaths:
+        """Keep process-visible Linux paths independent of host storage locations."""
+        return ExecutionPaths.bubblewrap(self.source, self.cwd)
 
     def __post_init__(self) -> None:
         """Validate mount ownership and initialize private HOME directories."""

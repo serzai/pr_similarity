@@ -1,6 +1,8 @@
 # Native macOS implementation plan
 
-Status: implementation in progress; agent execution remains Linux x64/glibc only.
+Status: provisioning and native launch prototypes implemented; benchmark runs
+remain Linux x64/glibc only. Work is on the contributor fork `serzai/pr_similarity`,
+branch `codex/native-macos-foundation`; the original repository is `upstream`.
 This is a development plan, not a macOS quick start.
 
 ## Goal and acceptance criteria
@@ -33,35 +35,53 @@ Python/sandbox contract. A downloaded Darwin executable alone is insufficient.
 
 ### 2. Prove the macOS isolation boundary
 
-- [ ] Prototype a deny-by-default Seatbelt profile via `/usr/bin/sandbox-exec`.
+- [x] Prototype a deny-by-default Seatbelt profile via `/usr/bin/sandbox-exec`.
   Apple marks this command deprecated in its local manual. Treat availability
   and effective enforcement as runtime prerequisites, not a stable API promise.
-- [ ] Test read/write/execute access for source, private HOME, runtime, temporary
+- [x] Test read/write/execute access for source, private HOME, runtime, temporary
   files, system libraries and explicitly configured tools. Deny the actual host
   HOME, OAuth refresh profile, Git cache/history, after revision and sibling runs.
-- [ ] Test symlinks, canonical paths (`/var` versus `/private/var`), subprocesses,
+- [x] Test symlinks, canonical paths (`/var` versus `/private/var`), subprocesses,
   network access and filesystem enumeration. Allow reading native libraries and
   DNS/TLS inputs without granting broad access to host credentials.
-- [ ] Test process signaling and host-process inspection restrictions. Document
+- [x] Test process signaling and host-process inspection restrictions. Document
   differences from Linux PID/user namespaces. Do not claim equivalent isolation
   if another host process can supply credentials or forbidden files.
-- [ ] Gate integration on these negative tests. If the profile cannot preserve
+- [x] Gate integration on these negative tests. If the profile cannot preserve
   the required boundary on a supported macOS release, stop native execution and
   revisit the design; never weaken the profile to make a smoke test pass.
+- [ ] Implement supervised descendant teardown. A child that calls `setsid()`
+  currently survives `run_process` process-group cleanup on macOS. The strict
+  expected-failure regression `test_native_detached_descendants_are_reaped`
+  demonstrates this and always kills its owned probe child. Keep native runs
+  disabled until normal exit, timeout, cancellation and host death cover detached
+  descendants without affecting unrelated host processes.
 
 ### 3. Separate launch paths from Linux mount paths
 
-- [ ] Introduce an execution backend interface for command construction,
-  environment, preflight, Python preparation/probes and cleanup. Keep bubblewrap
-  behavior and existing Linux configuration defaults unchanged.
-- [ ] Define backend-owned paths for source, cwd, HOME, temporary files, runtime,
+- [x] Add backend-owned command/environment/preflight behavior and an explicit
+  process path layout. `SeatbeltSandbox` is a development prototype sharing the
+  existing launcher interface. Its Python methods fail closed until stage 4.
+- [ ] Complete the backend interface with native Python preparation/probes and
+  descendant cleanup. Keep Linux configuration defaults unchanged.
+- [x] Define backend-owned paths for source, cwd, HOME, temporary files, runtime,
   Python and OpenCode. Seatbelt cannot remap host paths to `/repo` or
   `/sandbox-home`; use a dedicated canonical attempt directory on macOS.
-- [ ] Route setup, native config, declared resource/plugin URIs, MCP commands and
-  CLI tools through that layout. Audit `execution/agent_input.py`, `opencode.py`,
-  `python_sandbox.py`, `runtime/attempt.py` and `runtime/coordinator.py` together.
+- [x] Route setup scripts, copied native resources, plugin URIs, agent commands,
+  effective config normalization and resource evidence lookup through the layout.
+- [ ] Finish native Python path handling, backend selection in the coordinator
+  and explicit native MCP/tool examples; audit their ownership together.
 - [ ] Add an explicit macOS backend choice with early host validation. Preserve
   isolation identity in sandbox receipts and reject cross-backend resume.
+
+The prototype allows only dedicated writable source/HOME/temp roots and readonly
+launcher resources. Read access to system code excludes `/System/Volumes/Data`.
+Only ancestor metadata is allowed for path traversal, rather than a global file
+metadata grant. Filesystem policy does not create a mount or PID namespace.
+IP networking, including loopback, is deliberately shared as on Linux; it is not
+a barrier against a cooperating host HTTP service. Arbitrary host Unix sockets
+are denied, with only the system DNS socket explicitly allowed. Native temporary
+files currently live in a private attempt directory, not a Linux tmpfs.
 
 ### 4. Isolated macOS Python 3.12
 
@@ -136,3 +156,37 @@ Validation recorded on macOS ARM64, 2026-11-02:
   archive crash/recovery fixture failed during Linux Python discovery.
 - `make smoke` with the same bound: 218 passed, then setup execution failed on
   missing `/usr/bin/bwrap`. Linux integration validation remains outstanding.
+
+## Native prototype validation
+
+On macOS 26.1 ARM64, the Seatbelt/path tests passed with the real pinned binary:
+33 passed and one strict expected failure for detached descendant cleanup.
+The tests cover parameter-safe Unicode/quoted paths, negative file access,
+symlink and Data-volume aliases, readonly Git/runtime, restricted host process
+inspection/signals, shared IP networking, denied host Unix sockets, native cwd,
+frozen resources, setup, fake-agent events, effective config and cancellation.
+Real OpenCode `--version` and `debug config` ran inside Seatbelt without model
+credentials. A separate bounded HTTPS probe verified DNS/TLS.
+
+The portable regression group (provisioning, agent inputs, attempt execution,
+auth, process lifecycle, setup, wire contracts, wheel packaging, config and Make)
+passed 140 tests. The scheduler integration still fails on macOS at the existing
+bubblewrap provisioning gate. No Python evidence or saved-run schemas were
+changed in this prototype.
+
+The updated `make smoke` (bounded with `--maxfail=1`) reached 252 passed,
+one skipped optional real-binary check and the known descendant-cleanup xfail,
+then stopped at the existing `/usr/bin/bwrap` setup test. `make test` still stops
+at the Linux Python discovery used by the archive crash/recovery fixture.
+
+Run these checks from `benchmark/` on an ordinary macOS terminal:
+
+```sh
+PYTHONHASHSEED=42 .venv/bin/python -m pytest tests/test_seatbelt.py tests/test_execution_paths.py -q -rx
+```
+
+Set `BENCHMARK_TEST_OPENCODE` to an already provisioned v1.18.33 executable to
+also exercise the optional real-binary smoke. These checks are included in
+`make smoke`. A parent application sandbox that forbids nested Seatbelt may
+produce `sandbox_apply: Operation not permitted`; that is a failed prerequisite,
+not a reason to silently run the command without isolation.

@@ -550,7 +550,8 @@ class _Attempt:
         fields = {'instructions': 0, 'plugin': 1, 'paths': 2}
         for resource in receipts:
             group = fields[resource.field]
-            prefix = f'/benchmark-runtime/resources/{group}-{resource.index}-'
+            runtime_root = self.sandbox.paths.runtime if self.sandbox is not None else '/benchmark-runtime'
+            prefix = f'{runtime_root}/resources/{group}-{resource.index}-'
             values = groups[group]
             if not isinstance(values, list):
                 values = []
@@ -562,7 +563,7 @@ class _Attempt:
             for entry in resource.files:
                 matched = False
                 for root in roots:
-                    relative = 'runtime/' + root.removeprefix('/benchmark-runtime/').rstrip('/')
+                    relative = 'runtime/' + root.removeprefix(runtime_root + '/').rstrip('/')
                     if entry.path:
                         relative += '/' + entry.path
                     target = artifact_path(self.artifacts, relative)

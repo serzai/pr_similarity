@@ -139,7 +139,8 @@ class Invocation:
         if self.run_directory is not None:
             assert self.agent_input is not None
             native = install_agent_input(
-                self.run_directory, self.agent_input, self.config.identity(), self.sandbox.runtime_files
+                self.run_directory, self.agent_input, self.config.identity(), self.sandbox.runtime_files,
+                runtime_root=self.sandbox.paths.runtime,
             )
             instructions = (self.sandbox.runtime_files / 'task_instructions.txt').read_text(encoding='utf-8')
         elif agent.instructions_file is None:
@@ -151,7 +152,9 @@ class Invocation:
         prompt = (instructions + '\n\n' + task).encode('utf-8')
         save_public(self.artifacts / 'prompt.txt', prompt)
         if self.run_directory is None:
-            native = _native_resources(self.config, self.sandbox.runtime_files)
+            native = _native_resources(
+                self.config, self.sandbox.runtime_files, runtime_root=self.sandbox.paths.runtime
+            )
             write_json(self.sandbox.runtime_files / 'config.json', native, preserve_order=True)
             for source in sorted(self.sandbox.runtime_files.rglob('*')):
                 if source.is_file():
@@ -164,7 +167,7 @@ class Invocation:
                 'runtime': agent.runtime,
                 'created_at': utc_now(),
                 'cwd': self.sandbox.cwd.relative_to(self.sandbox.source).as_posix(),
-                'argv': ['/benchmark-bin/opencode', 'run', '--format', 'json'],
+                'argv': [self.sandbox.paths.binary, 'run', '--format', 'json'],
                 'prompt_transport': 'stdin',
                 'native_config': 'agent/opencode.json' if self.run_directory is not None else 'runtime/config.json',
                 'agent_input': self.agent_input,
@@ -201,7 +204,7 @@ class Invocation:
         log = self.logs / 'effective-config.log'
         try:
             result = run_process(
-                self.sandbox.command(['/benchmark-bin/opencode', 'debug', 'config']),
+                self.sandbox.command([self.sandbox.paths.binary, 'debug', 'config']),
                 env=self._environment,
                 cwd=self.sandbox.source,
                 timeout=self.config.data.provisioning.download_timeout_seconds,
@@ -217,7 +220,7 @@ class Invocation:
 
             data = parse_json(('\n'.join(lines)).encode('utf-8'))
             if self.run_directory is not None:
-                effective = save_effective(self.run_directory, data)
+                effective = save_effective(self.run_directory, data, runtime_root=self.sandbox.paths.runtime)
                 effective_path = effective.path
             else:
                 write_json(self.artifacts / 'effective_config.json', data, preserve_order=True)
@@ -272,7 +275,7 @@ class Invocation:
             return None
         assert self._environment is not None
         return run_process(
-            self.sandbox.command(['/bin/bash', '/benchmark-runtime/setup.sh']),
+            self.sandbox.command(['/bin/bash', self.sandbox.paths.runtime_file('setup.sh')]),
             env=self._environment,
             cwd=self.sandbox.source,
             timeout=setup.timeout_seconds,
@@ -310,7 +313,7 @@ class Invocation:
             self.agent_started = True
 
         result = run_process(
-            self.sandbox.command(['/benchmark-bin/opencode', 'run', '--format', 'json', '--log-level', 'DEBUG']),
+            self.sandbox.command([self.sandbox.paths.binary, 'run', '--format', 'json', '--log-level', 'DEBUG']),
             env=self._environment,
             cwd=self.sandbox.source,
             timeout=self.config.data.agent.timeout_seconds,

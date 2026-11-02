@@ -28,7 +28,9 @@ from benchmark.persistence.storage import (
 )
 
 
-def _native_resources(config: RunConfig, directory: Path) -> JsonObject:
+def _native_resources(
+    config: RunConfig, directory: Path, *, runtime_root: str = '/benchmark-runtime'
+) -> JsonObject:
     """Copy declared local resources; relative config paths resolve from its YAML."""
     native = copy.deepcopy(config.data.agent.config.opencode_json)
     expected = {(item.field, item.index): item.files for item in config.identity().resources}
@@ -79,7 +81,7 @@ def _native_resources(config: RunConfig, directory: Path) -> JsonObject:
                 else:
                     shutil.copyfile(source, target)
                     copied.append(ResourceFile(path='', sha256=bytes_sha256(target.read_bytes())))
-                destination = '/benchmark-runtime/' + relative
+                destination = runtime_root + '/' + relative
                 rewritten.append('file://' + destination if plugin else destination)
             if copied != expected.get((key, index)):
                 raise BenchmarkError(
@@ -99,7 +101,7 @@ def _groups(native: JsonObject) -> list[tuple[JsonObject, str, bool]]:
     ]
 
 
-def portable_native(native: JsonObject) -> JsonObject:
+def portable_native(native: JsonObject, *, runtime_root: str = '/benchmark-runtime') -> JsonObject:
     """Rewrite only launcher-managed native resource references."""
     result = copy.deepcopy(native)
     for mapping, key, plugin in _groups(result):
@@ -109,7 +111,7 @@ def portable_native(native: JsonObject) -> JsonObject:
         for index, value in enumerate(values):
             if not isinstance(value, str):
                 continue
-            prefix = 'file:///benchmark-runtime/' if plugin else '/benchmark-runtime/'
+            prefix = ('file://' if plugin else '') + runtime_root + '/'
             if value.startswith(prefix + 'resources/'):
                 values[index] = ('file://' if plugin else '') + value.removeprefix(prefix)
     return result
@@ -239,9 +241,11 @@ def validate_agent_input(directory: Path, selected: ReportAgentInput, identity: 
     return native
 
 
-def save_effective(directory: Path, native: JsonObject) -> ArtifactReference:
+def save_effective(
+    directory: Path, native: JsonObject, *, runtime_root: str = '/benchmark-runtime'
+) -> ArtifactReference:
     """Save one unique portable effective snapshot with atomic concurrent publication."""
-    content = document_bytes(portable_native(native))
+    content = document_bytes(portable_native(native, runtime_root=runtime_root))
     relative = 'agent/effective/' + bytes_sha256(content) + '.json'
     path = artifact_path(directory, relative)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,7 +260,8 @@ def save_effective(directory: Path, native: JsonObject) -> ArtifactReference:
 
 
 def install_agent_input(
-    directory: Path, selected: ReportAgentInput, identity: ConfigIdentity, runtime: Path
+    directory: Path, selected: ReportAgentInput, identity: ConfigIdentity, runtime: Path,
+    *, runtime_root: str = '/benchmark-runtime',
 ) -> JsonObject:
     """Copy verified frozen inputs into one attempt's private readonly launcher mount."""
     native = validate_agent_input(directory, selected, identity)
@@ -272,7 +277,7 @@ def install_agent_input(
         for index, value in enumerate(values):
             raw = value.removeprefix('file://') if plugin and isinstance(value, str) else value
             if isinstance(raw, str) and raw.startswith('resources/'):
-                values[index] = ('file://' if plugin else '') + '/benchmark-runtime/' + raw
+                values[index] = ('file://' if plugin else '') + runtime_root + '/' + raw
     write_json(runtime / 'config.json', native, preserve_order=True)
     return native
 
