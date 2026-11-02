@@ -37,8 +37,12 @@ jobs:
           persist-credentials: false
       - name: Select Homebrew Python 3.12
         run: |
-          brew install python@3.12
+          # Runner images already link python.org executables into /usr/local.
+          # Use the Homebrew keg directly rather than replacing those links.
+          brew install --skip-link python@3.12
           brew list --versions python@3.12
+          "$(brew --prefix python@3.12)/bin/python3.12" -c \
+            'import sys; assert "Cellar/python@3.12/" in sys.base_prefix; print(sys.version, sys.base_prefix)'
           echo "PRSIM_HOMEBREW_PYTHON=$(brew --prefix python@3.12)/bin/python3.12" >> "$GITHUB_ENV"
       - name: Prepare benchmark with Homebrew Python
         run: make setup PYTHON="$PRSIM_HOMEBREW_PYTHON"
