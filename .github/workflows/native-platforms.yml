@@ -10,6 +10,10 @@ name: Benchmark platforms
 permissions:
   contents: read
 
+concurrency:
+  group: benchmark-platforms-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   offline:
     name: ${{ matrix.name }}
@@ -58,6 +62,14 @@ jobs:
             --ro-bind / / -- /usr/bin/true
       - name: Prepare benchmark
         run: make setup PYTHON=python3.12
+      - name: Prepare viewer consumer
+        working-directory: viewer
+        run: make setup PYTHON=python3.12
+      - name: Frozen Linux Python provenance
+        if: runner.os == 'Linux'
+        run: >-
+          PYTHONHASHSEED=42 .venv/bin/python -m pytest
+          'tests/test_python_runtime.py::test_python_entrypoints_use_attempt_venv[python]'
       - name: Regression suite
         run: make test
       - name: Platform smoke
@@ -68,9 +80,6 @@ jobs:
           PYTHONHASHSEED=42 .venv/bin/python -m pytest
           tests/test_artifact_workflow.py::test_sigkill_recovers_only_state_owned_native_facts
           -k '3'
-      - name: Prepare viewer consumer
-        working-directory: viewer
-        run: make setup PYTHON=python3.12
       - name: Independent producer archive roundtrip
         working-directory: viewer
         run: >-

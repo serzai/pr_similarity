@@ -203,5 +203,6 @@ make smoke
 ```
 
 These checks are offline; smoke also builds and installs a wheel outside the
-checkout. Similarity and resource identity intentionally ignore executable
+checkout. Full conformance tests invoke the independent viewer environment; prepare
+it first with `make -C ../viewer setup PYTHON=python3.12`. Similarity and resource identity intentionally ignore executable
 bits; chmod-only tasks are outside the metric scope.
