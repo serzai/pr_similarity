@@ -3,9 +3,10 @@
 # Native macOS execution (experimental)
 
 The benchmark can run directly on macOS with `sandbox.backend: seatbelt`.
-The validated host is macOS 26.1 ARM64 with python.org Python 3.12.0 and Apple
-Command Line Tools. Homebrew Python, Intel hardware, older macOS and headless
-launchd domains still need independent validation. Linux remains the production
+Validated hosts include macOS 26.1 ARM64 with python.org Python 3.12.0 and the
+macOS 15 ARM64 GitHub runner with Python 3.12.10 and Apple Command Line Tools.
+Homebrew Python and the complete Intel matrix still need independent validation.
+Linux remains the production
 baseline; the collector and viewer server retain their existing platform support.
 
 ## Prepare and run
@@ -60,6 +61,11 @@ selected Git executable, HTTP transport helpers and builtin entrypoints into a
 content-verified cache and the readonly runtime. Their content digest is part of
 the sandbox receipt. This permits Git status/diff without exposing the developer
 tools tree. Host Git configuration and credential helpers are not inherited.
+
+Private Python uses `/private/etc/ssl/cert.pem` as its default CA bundle, with
+certificate and hostname verification enabled. This avoids OpenSSL looking in
+the original Python installation after relocation. Setup can explicitly select
+a CA file inside its private directories through `SSL_CERT_FILE`.
 
 Use `python`, `python3`, `pip` and `git` from PATH in setup scripts and tools.
 Absolute system Python is denied; absolute `/usr/bin/git` still invokes Apple's

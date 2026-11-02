@@ -217,6 +217,8 @@ class SeatbeltSandbox(Sandbox):
         result = super().environment(bindings, config_content=config_content, auth_content=auth_content)
         home = self.paths.home
         result.update(HOME=home, TMPDIR=self.paths.temporary, LANG='en_US.UTF-8', LC_ALL='en_US.UTF-8')
+        # Relocated OpenSSL defaults still point at the inaccessible host Python prefix.
+        result.setdefault('SSL_CERT_FILE', '/private/etc/ssl/cert.pem')
         for key, child in (('CONFIG', 'config'), ('CACHE', 'cache'), ('DATA', 'data'), ('STATE', 'state')):
             result['XDG_' + key + '_HOME'] = home + '/' + child
         result['PATH'] = ':'.join((
@@ -261,7 +263,7 @@ class SeatbeltSandbox(Sandbox):
         return SandboxReceipt(
             backend='seatbelt',
             version=(platform.mac_ver()[0] + ':'
-                     + bytes_sha256((_PROFILE + repr(_SYSTEM_READS) + ':coalition-v1').encode())
+                     + bytes_sha256((_PROFILE + repr(_SYSTEM_READS) + ':coalition-v1:system-ca-v1').encode())
                      + (':git-' + self.git.name if self.git is not None else '')),
             binary_sha256=bytes_sha256(Path('/usr/bin/sandbox-exec').read_bytes()),
             network='shared',

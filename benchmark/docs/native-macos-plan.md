@@ -3,8 +3,9 @@
 Status: the explicit experimental Seatbelt backend is integrated into the
 coordinator and attempts. Native offline setup, fake-agent execution, scoring,
 resume and archive import work on macOS 26.1 ARM64/python.org Python 3.12.0.
-Linux remains the production baseline; Intel, Homebrew and hosted-runner matrix
-validation are still open. Work is on the fork `serzai/pr_similarity`, branch
+Linux remains the production baseline. Hosted Linux x64 and macOS 15 ARM64 have
+passed; the complete Intel matrix and Homebrew validation are still open.
+Work is on the fork `serzai/pr_similarity`, branch
 `codex/native-macos-foundation`; the original repository is `upstream`.
 Use [native setup](macos.md) for the experimental run configuration.
 
@@ -338,5 +339,32 @@ CI is configured for full regression/smoke and independent archive-consumer chec
 on Ubuntu 24.04 x64, macOS 15 ARM64 and macOS 15 Intel. Actions are pinned to the
 verified v7 commits. Runner labels follow the
 [GitHub runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-Hosted results remain pending until the workflow has run; local ARM64 results do
-not validate those other installations.
+The initial integrated hosted results and subsequent fixes are recorded below.
+
+## Hosted validation and native TLS checkpoint
+
+At `6abd950`, the full local macOS 26.1 ARM64 suite passed **864 tests, 37 skipped**.
+The [hosted matrix](https://github.com/serzai/pr_similarity/actions/runs/41533524038)
+completed successfully on Ubuntu 24.04 x64 and macOS 15 ARM64:
+
+- Linux: regression 858 passed/43 skipped, smoke 548 passed/43 skipped,
+  exact Python provenance and independent archive consumer passed.
+- ARM64: regression 864 passed/37 skipped, smoke 554 passed/37 skipped,
+  five crash/recovery boundaries and 61 independent consumer checks passed.
+- The Intel job is still pending; its earlier run reached 853 passed/37 skipped
+  with two consumer failures caused by missing viewer setup. Setup now runs
+  before producer/consumer conformance tests.
+
+Linux CI exposed two prerequisites now handled explicitly: Ubuntu's scoped
+AppArmor user-namespace permission for bubblewrap, and hosted Python's private
+ELF library selection. The runner copies and measures selected private libraries
+and verifies the exact interpreter patch version; it never forwards host loader
+paths into the sandbox.
+
+A separate native HTTPS check found that relocated OpenSSL still searched the
+original host framework for CA certificates. Native environments now default
+`SSL_CERT_FILE` to the already-allowed system bundle. Certificate/hostname checks
+remain enabled and explicit private CA bindings are retained. The offline trust
+regression and Python/backend group passed 23 tests; a bounded read-only HTTPS
+request to the contributor fork loaded 128 CAs and returned 200. Sandbox identity
+changes with this environment policy so resume cannot silently switch defaults.

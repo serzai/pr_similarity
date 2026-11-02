@@ -139,6 +139,22 @@ def test_private_python_probe_and_package_install(sandbox: SeatbeltSandbox) -> N
 
 
 @native
+def test_private_python_loads_system_trust_without_host_framework_access(sandbox: SeatbeltSandbox) -> None:
+    sandbox.prepare_python()
+    result = invoke(sandbox, ['python', '-c',
+        'import json,ssl;ctx=ssl.create_default_context();'
+        'print(json.dumps([len(ctx.get_ca_certs()),ctx.verify_mode,ctx.check_hostname,'
+        'ssl.get_default_verify_paths().cafile]))'])
+    assert result.returncode == 0, result.stderr
+    count, mode, hostname, bundle = json.loads(result.stdout)
+    assert count > 0
+    assert mode == 2 and hostname is True  # CERT_REQUIRED, with hostname verification.
+    assert bundle == '/private/etc/ssl/cert.pem'
+    private_ca = str(sandbox.home / 'project-ca.pem')
+    assert sandbox.environment({'SSL_CERT_FILE': private_ca})['SSL_CERT_FILE'] == private_ca
+
+
+@native
 def test_native_attempts_do_not_share_site_packages(sandbox: SeatbeltSandbox, tmp_path: Path) -> None:
     sandbox.preflight(); sandbox.prepare_python()
     first = invoke(sandbox, ['python', '-c', 'import sysconfig;print(sysconfig.get_path("purelib"))'])
