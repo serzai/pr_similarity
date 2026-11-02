@@ -13,6 +13,7 @@ and a first run. Then choose the guide for your next step:
 | [publication.md](publication.md) | Validate and publish a run to a viewer |
 | [credentials.md](credentials.md) | Inspect credential lifetimes and clean up private logins |
 | [reference.md](reference.md) | Resume, retries, progress, storage and scoring details |
+| [native-macos-plan.md](native-macos-plan.md) | Development stages and acceptance criteria for native macOS execution |
 
 For files you can copy and customize, open the
 [configuration and basket examples](../examples/README.md).

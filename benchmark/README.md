@@ -39,6 +39,11 @@ Start with [setup and login](#quick-start), then use the guide for your next tas
 OpenCode does not need a separate installation: the runner downloads and caches
 `agent.runtime` from your config, then records it with the run.
 
+Native macOS execution is being developed in [stages](docs/native-macos-plan.md).
+The OpenCode provisioner can select and verify Darwin ARM64/x64 ZIP assets, but
+Python preparation and agent sandbox execution still require Linux. This does
+not yet make `make setup` or `make run` supported on macOS.
+
 ## Quick start
 
 Run from this directory:

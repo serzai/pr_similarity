@@ -5,11 +5,14 @@ import hashlib
 import os
 import platform
 import re
+import stat
 import tarfile
 import threading
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import BinaryIO
 
 import httpx
 from benchmark.errors import BenchmarkError
@@ -35,10 +38,15 @@ class Runtime:
 
 
 def select_asset() -> tuple[str, str]:
-    """Select baseline CPU code for the supported Linux x64 glibc platform."""
+    """Select an official native CLI asset; sandbox support is checked separately."""
+    if platform.system() == 'Darwin':
+        if platform.machine() == 'arm64':
+            return 'opencode-darwin-arm64.zip', 'darwin-arm64'
+        if platform.machine() == 'x86_64':
+            return 'opencode-darwin-x64-baseline.zip', 'darwin-x64-baseline'
     if platform.system() != 'Linux' or platform.machine() not in ('x86_64', 'amd64'):
         raise BenchmarkError(
-            'unsupported_platform', 'This runtime adapter is validated on Linux x64 only.', exit_code=1
+            'unsupported_platform', 'OpenCode provisioning supports Linux x64/glibc and macOS arm64/x64.', exit_code=1
         )
     if platform.libc_ver()[0] != 'glibc':
         raise BenchmarkError('unsupported_platform', 'The initial OpenCode adapter requires glibc Linux.', exit_code=1)
@@ -121,9 +129,46 @@ async def _download(
             await client.aclose()
 
 
+def _write_binary(member: BinaryIO, destination: Path) -> None:
+    """Copy an already validated member into one caller-owned executable path."""
+    with member, destination.open('wb') as output:
+        while chunk := member.read(1024 * 1024):
+            output.write(chunk)
+        output.flush()
+        os.fsync(output.fileno())
+    destination.chmod(0o700)
+
+
+def _extract_zip_binary(archive: Path, destination: Path) -> None:
+    """Validate the complete ZIP inventory before opening the selected CLI member."""
+    with zipfile.ZipFile(archive) as source:
+        candidates = []
+        for item in source.infolist():
+            parts = item.filename.rstrip('/').split('/')
+            kind = stat.S_IFMT(item.external_attr >> 16)
+            if (
+                item.filename.startswith('/')
+                or any(part in ('', '.', '..') for part in parts)
+                or kind not in (0, stat.S_IFREG, stat.S_IFDIR)
+            ):
+                raise BenchmarkError(
+                    'runtime_archive_unsafe', 'OpenCode archive contains unsafe paths, links or file types.', exit_code=1
+                )
+            if not item.is_dir() and kind != stat.S_IFDIR and parts[-1] == 'opencode':
+                candidates.append(item)
+        if len(candidates) != 1:
+            raise BenchmarkError(
+                'runtime_binary_missing', 'OpenCode archive must contain exactly one CLI executable.', exit_code=1
+            )
+        _write_binary(source.open(candidates[0]), destination)
+
+
 def extract_binary(archive: Path, destination: Path) -> None:
-    """Read the one regular CLI member; never extract tar paths or links."""
+    """Read one regular CLI from a release tarball or ZIP, without extracting paths."""
     try:
+        if archive.suffix == '.zip':
+            _extract_zip_binary(archive, destination)
+            return
         with tarfile.open(archive, 'r:gz') as source:
             candidates = []
             for item in source.getmembers():
@@ -152,13 +197,8 @@ def extract_binary(archive: Path, destination: Path) -> None:
                 raise BenchmarkError(
                     'runtime_binary_missing', 'OpenCode CLI cannot be read from the archive.', exit_code=1
                 )
-            with member, destination.open('wb') as output:
-                while chunk := member.read(1024 * 1024):
-                    output.write(chunk)
-                output.flush()
-                os.fsync(output.fileno())
-            destination.chmod(0o700)
-    except (tarfile.TarError, OSError) as exc:
+            _write_binary(member, destination)
+    except (tarfile.TarError, zipfile.BadZipFile, NotImplementedError, RuntimeError, OSError) as exc:
         raise BenchmarkError(
             'runtime_archive_failed', 'Cannot unpack the pinned OpenCode asset; check disk and retry.', exit_code=1
         ) from exc
@@ -248,11 +288,11 @@ def provision_opencode(
         with TemporaryDirectory(prefix='install-', dir=directory) as temporary:
             staging = Path(temporary)
             receipt = asyncio.run(
-                cancellable(_download(tag, asset_name, staging / 'archive.tar.gz', timeout, client), cancel)
+                cancellable(_download(tag, asset_name, staging / asset_name, timeout, client), cancel)
             )
             check_cancelled(cancel)
             candidate = staging / 'opencode'
-            extract_binary(staging / 'archive.tar.gz', candidate)
+            extract_binary(staging / asset_name, candidate)
             version = probe_version(candidate, timeout, cancel=cancel)
             if version != tag[1:]:
                 raise BenchmarkError(
