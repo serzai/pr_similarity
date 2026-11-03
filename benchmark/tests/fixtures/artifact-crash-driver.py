@@ -158,7 +158,15 @@ def main() -> None:
     )
     coordinator.provision_opencode = lambda *_args, **_kwargs: runtime
     install()
-    coordinator.run(load_config(ROOT / 'config.yaml'), ROOT / 'basket.json', output=ROOT / 'runs', progress='off')
+    status, directory = coordinator.run(
+        load_config(ROOT / 'config.yaml'), ROOT / 'basket.json', output=ROOT / 'runs', progress='off'
+    )
+    # This fake-provider fixture must pause before returning; expose durable errors
+    # instead of hiding an early coordinator return behind a missing notice file.
+    raise RuntimeError(
+        f'Coordinator returned {status} before {BOUNDARY}; '
+        + (directory / 'report.json').read_text(encoding='utf-8')
+    )
 
 
 if __name__ == '__main__':

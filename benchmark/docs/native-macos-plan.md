@@ -368,3 +368,16 @@ remain enabled and explicit private CA bindings are retained. The offline trust
 regression and Python/backend group passed 23 tests; a bounded read-only HTTPS
 request to the contributor fork loaded 128 CAs and returned 200. Sandbox identity
 changes with this environment policy so resume cannot silently switch defaults.
+
+After the CA change (`d73ac95`), local `make test` passed **865 tests, 37 skipped**
+and `make smoke` passed **555 tests, 37 skipped**. Hosted Linux and ARM64 also
+passed. Intel passed 864 tests with one crash-fixture watchdog failure during
+cold runtime preparation. The macOS boundary watchdog now allows 180 seconds;
+the recovery/cleanup assertions are unchanged. CI allows 90 minutes for the full
+Intel regression, smoke and independent evidence checks.
+
+A separate Homebrew workflow installs into disposable hosted runners on both
+architectures and selects the formula's absolute executable. It skips linking
+over the image's python.org commands and compares resolved base-prefix paths
+against the selected Homebrew prefix. It checks relocation, isolation, native
+workflow and the independent viewer consumer; its results remain pending.

@@ -42,7 +42,8 @@ jobs:
           brew install --skip-link python@3.12
           brew list --versions python@3.12
           "$(brew --prefix python@3.12)/bin/python3.12" -c \
-            'import sys; assert "Cellar/python@3.12/" in sys.base_prefix; print(sys.version, sys.base_prefix)'
+            'import sys; from pathlib import Path; print(sys.version, sys.base_prefix); assert Path(sys.base_prefix).resolve().is_relative_to(Path(sys.argv[1]).resolve())' \
+            "$(brew --prefix python@3.12)"
           echo "PRSIM_HOMEBREW_PYTHON=$(brew --prefix python@3.12)/bin/python3.12" >> "$GITHUB_ENV"
       - name: Prepare benchmark with Homebrew Python
         run: make setup PYTHON="$PRSIM_HOMEBREW_PYTHON"

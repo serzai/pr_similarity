@@ -496,10 +496,13 @@ def _crash(root: Path, boundary: str) -> tuple[Path, CrashNotice]:
         try:
             # Includes cold Python discovery, venv bootstrap and real sandbox mounts.
             # This watchdog bounds reaching the boundary, not the recovery assertions.
-            deadline = time.monotonic() + 90
+            # Cold Mach-O relocation/signing on hosted Intel can exceed 90 seconds.
+            deadline = time.monotonic() + (180 if platform.system() == 'Darwin' else 90)
             while time.monotonic() < deadline and not paused.is_file() and process.poll() is None:
                 time.sleep(0.02)
-            assert paused.is_file(), (root / 'driver.log').read_text(encoding='utf-8')
+            assert paused.is_file(), (
+                f'Driver status={process.poll()}; ' + (root / 'driver.log').read_text(encoding='utf-8')
+            )
             notice = CrashNotice.model_validate(read_json(paused))
             assert notice.boundary == boundary and notice.pid == process.pid
         finally:
