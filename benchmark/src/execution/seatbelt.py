@@ -14,6 +14,7 @@ from benchmark.execution.paths import ExecutionPaths
 from benchmark.execution.process import ProcessResult, run_process
 from benchmark.execution.macos_supervisor import run_macos_process
 from benchmark.execution.macos_git import install_macos_git
+from benchmark.execution.macos_toolchain import toolchain_digest
 from benchmark.execution.python_sandbox import python_probe_script
 from benchmark.execution.sandbox import Sandbox
 from benchmark.models.runtime import PythonProbe, SandboxReceipt
@@ -37,6 +38,8 @@ _PROFILE = '''(version 1)
 (allow file-read-metadata ANCESTORS
   (literal "/etc") (literal "/private/etc") (literal "/private/etc/ssl")
   (literal "/private/var") (literal "/private/var/db") (literal "/private/var/select")
+  ; libc resolves the DNS socket through /var even with a HOME-based temp root.
+  (literal "/var") (literal "/var/run") (literal "/private/var/run")
   (literal "/Library/Preferences"))
 ; dyld/libignition opens the root directory for openat, without granting subpaths.
 (allow file-read* (literal "/") (literal "/System") (literal "/System/Volumes")
@@ -53,7 +56,8 @@ _PROFILE = '''(version 1)
   (subpath (param "TEMP_ALIAS"))
   (subpath (param "RUNTIME"))
   (subpath (param "RUNTIME_ALIAS"))
-  PYTHON_READS)
+  PYTHON_READS
+  TOOLCHAIN_READS)
 (allow file-write*
   (subpath (param "SOURCE"))
   (subpath (param "SOURCE_ALIAS"))
@@ -85,6 +89,7 @@ class SeatbeltPolicy:
     runtime: Path
     binary: Path
     python_root: Path | None = None
+    toolchain_root: Path | None = None
 
     def __post_init__(self) -> None:
         """Reject overlapping writable roots that would expose private launcher state."""
@@ -97,19 +102,23 @@ class SeatbeltPolicy:
         binary = self.binary.resolve()
         if any(binary.is_relative_to(path) for path in directories[:3]):
             raise BenchmarkError('unsafe_sandbox', 'The pinned executable must stay outside writable attempt paths.')
-        if self.python_root is not None:
-            python = self.python_root.resolve()
+        for shared in (self.python_root, self.toolchain_root):
+            if shared is None:
+                continue
+            python = shared.resolve()
             if python in (Path('/'), Path.home().resolve()) or any(
                 python.is_relative_to(path) or path.is_relative_to(python) for path in directories[:3]
             ):
-                raise BenchmarkError('unsafe_sandbox', 'The base Python must be private and readonly.')
+                raise BenchmarkError('unsafe_sandbox', 'Shared native runtimes must be private and readonly.')
 
     def profile(self) -> str:
         """Keep paths out of profile syntax by using sandbox-exec parameters."""
         system = '\n  '.join(f'(subpath "{path}")' for path in _SYSTEM_READS)
         ancestors = '\n  '.join(f'(literal (param "ANCESTOR_{index}"))' for index in range(len(self.ancestors())))
         python = '(subpath (param "PYTHON")) (subpath (param "PYTHON_ALIAS"))' if self.python_root else ''
-        return _PROFILE.replace('SYSTEM_READS', system).replace('ANCESTORS', ancestors).replace('PYTHON_READS', python)
+        toolchain = '(subpath (param "TOOLCHAIN"))' if self.toolchain_root else ''
+        return (_PROFILE.replace('SYSTEM_READS', system).replace('ANCESTORS', ancestors)
+                .replace('PYTHON_READS', python).replace('TOOLCHAIN_READS', toolchain))
 
     def ancestors(self) -> list[Path]:
         """Permit only traversal metadata, without exposing arbitrary host file metadata."""
@@ -125,6 +134,8 @@ class SeatbeltPolicy:
         ]
         if self.python_root is not None:
             paths.append(('PYTHON', self.python_root))
+        if self.toolchain_root is not None:
+            paths.append(('TOOLCHAIN', self.toolchain_root))
         for key, path in paths:
             canonical = path.resolve()
             result[key] = canonical
@@ -150,6 +161,7 @@ class SeatbeltSandbox(Sandbox):
     """Native isolation with private Python/Git and supervised process lifecycle."""
 
     git: Path | None = None
+    toolchain: Path | None = None
 
     def __post_init__(self) -> None:
         """Validate native paths before the base class creates or chmods any directory."""
@@ -173,6 +185,7 @@ class SeatbeltSandbox(Sandbox):
         return SeatbeltPolicy(
             self.source, self.home, Path(self.paths.temporary), self.runtime_files, self.binary,
             self.python.root if self.python is not None else None,
+            self.toolchain,
         )
 
     def command(self, argv: list[str]) -> list[str]:
@@ -196,6 +209,8 @@ class SeatbeltSandbox(Sandbox):
                 aliases[str(parent)] = '@attempt'
         if self.python is not None:
             aliases[str(self.python.root.resolve())] = '/benchmark-python'
+        if self.toolchain is not None:
+            aliases[str(self.toolchain.resolve())] = '/benchmark-toolchain'
         for path, alias in list(aliases.items()):
             if path.startswith(('/private/var/', '/private/tmp/')):
                 aliases[path.removeprefix('/private')] = alias
@@ -213,6 +228,8 @@ class SeatbeltSandbox(Sandbox):
     ) -> dict[str, str]:
         """Use only private process paths; never import the host process environment."""
         git_controls = {'GIT_EXEC_PATH', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT'}
+        if self.toolchain is not None:
+            git_controls |= {'CC', 'CXX', 'AR', 'RANLIB', 'SDKROOT'}
         if any(key.startswith(('DYLD_', '__CF')) or key in git_controls for key in bindings):
             raise BenchmarkError('invalid_environment', 'Bindings must not replace private launcher controls.')
         result = super().environment(bindings, config_content=config_content, auth_content=auth_content)
@@ -225,6 +242,11 @@ class SeatbeltSandbox(Sandbox):
         result['PATH'] = ':'.join((
             str(self.binary.resolve().parent), home + '/.local/bin', home + '/bin', '/usr/bin', '/bin',
         ))
+        if self.toolchain is not None:
+            root = str(self.toolchain.resolve())
+            result.update(CC=root + '/bin/clang', CXX=root + '/bin/clang++',
+                          AR=root + '/bin/ar', RANLIB=root + '/bin/ranlib', SDKROOT=root + '/sdk')
+            result['PATH'] = root + '/bin:' + result['PATH']
         if self.git is not None:
             result.update(GIT_EXEC_PATH=self.paths.runtime + '/git', GIT_CONFIG_NOSYSTEM='1',
                           GIT_CONFIG_GLOBAL=self.paths.home + '/.gitconfig', GIT_TERMINAL_PROMPT='0')
@@ -261,13 +283,36 @@ class SeatbeltSandbox(Sandbox):
                     )
         finally:
             forbidden.unlink()
+        if self.toolchain is not None:
+            if toolchain_digest(self.toolchain, cancel) != self.toolchain.name:
+                raise BenchmarkError('native_toolchain_changed', 'Private Apple toolchain failed content verification.')
+            source = self.home / 'compiler-check.cpp'
+            binary = self.home / 'compiler-check'
+            source.write_text('#include <vector>\nint main(){std::vector<int> v{1,2};return v.size()!=2;}\n')
+            try:
+                for argv in (
+                    [str(self.toolchain / 'bin/clang++'), '-std=c++17', str(source), '-o', str(binary)],
+                    [str(binary)],
+                ):
+                    result = self.run_process(
+                        argv, env=self.environment({}), cwd=self.source, timeout=max(30, timeout), grace=.2,
+                        cancel=cancel or threading.Event(), log=self.runtime_files / 'compiler-check.log',
+                    )
+                    if result.status == 'cancelled':
+                        check_cancelled(cancel)
+                    if result.status != 'completed':
+                        raise BenchmarkError('native_toolchain_unavailable', 'Private C++ compile/link/execute probe failed.')
+            finally:
+                source.unlink(missing_ok=True)
+                binary.unlink(missing_ok=True)
         return SandboxReceipt(
             backend='seatbelt',
             version=(platform.mac_ver()[0] + ':'
                      + bytes_sha256((
                          _PROFILE + repr(_SYSTEM_READS) + ':coalition-v1:system-ca-v1:pip-entrypoints-v1'
                      ).encode())
-                     + (':git-' + self.git.name if self.git is not None else '')),
+                     + (':git-' + self.git.name if self.git is not None else '')
+                     + (':toolchain-' + self.toolchain.name if self.toolchain is not None else '')),
             binary_sha256=bytes_sha256(Path('/usr/bin/sandbox-exec').read_bytes()),
             network='shared',
         )

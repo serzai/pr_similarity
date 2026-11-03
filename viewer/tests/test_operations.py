@@ -10,9 +10,17 @@ from pathlib import Path
 import boto3
 import pytest
 from botocore.stub import Stubber
-from viewer.cli import administer, lifecycle
+from viewer.cli import _identity, administer, lifecycle
 from viewer.config import Config
 from viewer.util import json_bytes
+
+
+def test_process_identity_distinguishes_alive_exited_and_invalid_processes() -> None:
+    assert _identity(os.getpid()) is not None
+    assert _identity(-1) is None and _identity(None) is None
+    process = subprocess.Popen([sys.executable, '-c', 'pass'])
+    process.wait(timeout=10)
+    assert _identity(process.pid) is None
 
 
 def test_make_daemon_lifecycle_on_current_host(tmp_path: Path) -> None:

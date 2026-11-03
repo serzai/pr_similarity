@@ -26,7 +26,8 @@ from benchmark.persistence.storage import bytes_sha256
 from benchmark.validation.contracts import validate_document
 
 _RESERVED = (
-    frozenset({'HOME', 'PATH', 'TMPDIR', 'PYTHONHASHSEED', 'PWD', 'OLDPWD', 'BASH_ENV', 'ENV', 'SHELLOPTS'})
+    frozenset({'HOME', 'PATH', 'TMPDIR', 'PYTHONHASHSEED', 'PWD', 'OLDPWD', 'BASH_ENV', 'ENV', 'SHELLOPTS',
+               'PRSIM_TEST_REPORT'})
     | PYTHON_CONTROLS
 )
 _SECRET_KEYS = frozenset(
@@ -280,6 +281,8 @@ def load_config(path: Path, *, workers: int | None = None) -> RunConfig:
     agent = data.get('agent')
     if isinstance(agent, dict) and isinstance(agent.get('setup'), dict):
         agent['setup'].setdefault('timeout_seconds', 300)
+    if isinstance(agent, dict) and isinstance(agent.get('validation'), dict):
+        agent['validation'].setdefault('timeout_seconds', 900)
     validate_document('config', data)
     settings = Configuration.model_validate(data)
     if any(not tag.strip() or any(ord(char) < 32 or ord(char) == 127 for char in tag) for tag in settings.tags):
@@ -291,7 +294,13 @@ def load_config(path: Path, *, workers: int | None = None) -> RunConfig:
             'invalid_sandbox', 'Seatbelt requires system sandbox-exec and sandbox.auto_install=false.'
         )
     directory = resolved.parent
+    if settings.sandbox.toolchain is not None and settings.sandbox.backend != 'seatbelt':
+        raise BenchmarkError('invalid_sandbox', 'Apple toolchain requires the native Seatbelt backend.')
     agent = settings.agent
+    if settings.sandbox.toolchain is not None and (
+        {'CC', 'CXX', 'AR', 'RANLIB', 'SDKROOT'} & (set(agent.env) | set(agent.credentials))
+    ):
+        raise BenchmarkError('invalid_environment', 'Bindings must not replace private toolchain controls.')
     overlap = set(agent.env) & set(agent.credentials)
     secret_env = any(re.search(r'(?:API_KEY|TOKEN|PASSWORD|SECRET)$', key) for key in agent.env)
     if overlap or secret_env or any(_reserved(key) for key in (*agent.env, *agent.credentials)):
@@ -310,6 +319,11 @@ def load_config(path: Path, *, workers: int | None = None) -> RunConfig:
         script = _path(agent.setup.script, directory)
         setup = IdentitySetup(sha256=_resource_file(script), timeout_seconds=agent.setup.timeout_seconds)
         agent.setup.script = str(script)
+    validation = None
+    if agent.validation is not None:
+        script = _path(agent.validation.script, directory)
+        validation = IdentitySetup(sha256=_resource_file(script), timeout_seconds=agent.validation.timeout_seconds)
+        agent.validation.script = str(script)
     if agent.instructions_file is None:
         content = files('benchmark').joinpath('resources', 'task_instructions.txt').read_bytes()
     else:
@@ -340,4 +354,6 @@ def load_config(path: Path, *, workers: int | None = None) -> RunConfig:
         diff_excludes=agent.diff_excludes.copy(),
         env=agent.env.copy(),
     )
+    if validation is not None:
+        identity.validation = validation
     return RunConfig(settings, directory, identity, source_path=resolved)

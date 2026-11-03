@@ -48,6 +48,33 @@ def write_config(directory: Path, **overrides: object) -> Path:
     return path
 
 
+def test_pandas_tested_profile_is_separate_and_content_bound(tmp_path: Path) -> None:
+    examples = Path(__file__).resolve().parents[1] / 'examples'
+    shutil.copytree(examples, tmp_path / 'examples')
+    path = tmp_path / 'examples/pandas-macos-tested.yaml'
+    config = load_config(path)
+    assert config.data.tags == ['pandas-tests']
+    assert config.data.sandbox.toolchain == 'apple_clang'
+    assert config.identity().validation is not None
+    script = path.parent / 'validate-pandas.sh'
+    script.write_text(script.read_text() + '\n# changed validation\n')
+    assert load_config(path).identity() != config.identity()
+
+
+@pytest.mark.parametrize('key', ['CC', 'CXX', 'AR', 'RANLIB', 'SDKROOT'])
+def test_toolchain_environment_cannot_be_overridden(tmp_path: Path, key: str) -> None:
+    path = write_config(tmp_path, sandbox={
+        'backend': 'seatbelt', 'executable': '/usr/bin/sandbox-exec',
+        'auto_install': False, 'toolchain': 'apple_clang',
+    })
+    data = yaml.safe_load(path.read_text())
+    data['agent']['env'] = {key: '/host/compiler'}
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(BenchmarkError) as error:
+        load_config(path)
+    assert error.value.code == 'invalid_environment'
+
+
 def test_defaults_and_technical_overrides(tmp_path: Path) -> None:
     """Verify defaults and technical overrides."""
     path = write_config(tmp_path)

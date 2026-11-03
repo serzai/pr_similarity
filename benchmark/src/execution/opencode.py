@@ -186,6 +186,14 @@ class Invocation:
                 raise BenchmarkError('resource_changed', 'Setup script changed after config validation.', exit_code=1)
             save_public(self.artifacts / 'setup.sh', content)
             atomic_write(self.sandbox.runtime_files / 'setup.sh', content)
+        if agent.validation is not None and self.run_directory is None:
+            content = Path(agent.validation.script).read_bytes()
+            expected = self.config.identity().validation
+            assert expected is not None
+            if bytes_sha256(content) != expected.sha256:
+                raise BenchmarkError('resource_changed', 'Validation script changed after config validation.', exit_code=1)
+            save_public(self.artifacts / 'validation.sh', content)
+            atomic_write(self.sandbox.runtime_files / 'validation.sh', content)
         assert native is not None
         bindings = {**agent.env, **credentials}
         self._environment = self.sandbox.environment(

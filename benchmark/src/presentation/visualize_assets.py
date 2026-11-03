@@ -302,6 +302,7 @@ SCRIPT = '''const report=JSON.parse(document.querySelector('#report-data').textC
 const usageDisplay=JSON.parse(document.querySelector('#view-data').textContent).measurements;
 const field=document.querySelector('#search');
 const status=t=>t.infrastructure_error||t.processing_status!=='completed'?'fail':
+  t.tests&&t.tests.status!=='passed'?(t.tests.status==='timeout'?'timeout':'fail'):
   t.execution.status==='timeout'?'timeout':t.execution.status==='completed'?
   ({empty:'no-op',nonempty:'OK'}[t.changes.status]||'fail'):'fail';
 const measured=values=>{const known=values.filter(v=>v!=null);return {

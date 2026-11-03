@@ -18,6 +18,7 @@ from benchmark.execution.provider_errors import ERROR_PRIORITY, FATAL_PROVIDER_C
 from benchmark.execution.provisioning import Runtime
 from benchmark.execution.backends import sandbox_type
 from benchmark.execution.telemetry import capture_telemetry, unavailable_telemetry
+from benchmark.execution.validation import run_validation
 from benchmark.metrics.process import score_saved
 from benchmark.models.base import WireModel
 from benchmark.models.basket import BasketRecord
@@ -42,6 +43,7 @@ from benchmark.models.report import (
     ReportPhase,
     ReportTaskChanges,
     ReportTaskExecution,
+    ReportTests,
 )
 from benchmark.models.runtime import PythonAttemptReceipt
 from benchmark.models.scoring import Diagnostic
@@ -191,6 +193,11 @@ class _Attempt:
         self.attempt, self.stop = copy.deepcopy(attempt), stop
         self.registration = copy.deepcopy(registration)
         self.row = pending_task(basket_row)
+        if config.data.agent.validation is not None:
+            self.row.tests = ReportTests(
+                status='not_started', exit_code=None, duration_seconds=None,
+                counts=None, log=None, junit=None, reason='agent_not_started',
+            )
         self.row.processing_status = 'running'
         self.row.final_attempt = self.attempt
         self.row.artifacts.outcome = (self.relative / 'outcome.json').as_posix()
@@ -239,6 +246,14 @@ class _Attempt:
                         self.capture()
                     except OPERATION_ERRORS as error:
                         self.failed(error)
+                if self.config.data.agent.validation is not None and self.opencode_started:
+                    try:
+                        self.validate()
+                    except OPERATION_ERRORS as error:
+                        self.command.diagnostic(error)
+                        assert self.row.tests is not None
+                        self.row.tests.status = 'error'
+                        self.row.tests.reason = 'test_validation_failed'
                 try:
                     self.telemetry()
                 except OPERATION_ERRORS as error:
@@ -277,7 +292,8 @@ class _Attempt:
             self.private / 'runtime',
             self.runtime.binary,
             self.runtime.python,
-            **({'git': self.runtime.git} if self.config.data.sandbox.backend == 'seatbelt' else {}),
+            **({'git': self.runtime.git, 'toolchain': self.runtime.toolchain}
+               if self.config.data.sandbox.backend == 'seatbelt' else {}),
         )
         if self.report_identity.python_runtime is None:
             raise BenchmarkError('python_runtime_missing', 'Attempt requires frozen Python provenance.')
@@ -361,6 +377,17 @@ class _Attempt:
             self.classify_errors()
             if self.provider_error is not None:
                 self.failed(self.provider_error)
+
+    def validate(self) -> None:
+        """Run mandatory tests after agent source capture, before the native seal."""
+        validation = self.config.data.agent.validation
+        assert validation is not None
+        self.command.phase('testing', self.row.id)
+        self.row.tests = run_validation(
+            self.sandbox, self.artifacts, self.run_dir,
+            timeout=validation.timeout_seconds, grace=self.config.data.shutdown.grace_seconds,
+            cancel=self.stop, bindings=self.config.data.agent.env, secrets=self.secrets(),
+        )
 
     def quota_stop(self, failure: ReportError) -> None:
         """Stop shared work immediately while keeping state writes with the coordinator."""
@@ -588,11 +615,15 @@ class _Attempt:
             'python.json',
             'python-prepare.log',
             'python-check.log',
+            'compiler-check.log',
             'prompt.txt',
             'launch.json',
             'runtime/config.json',
             'setup.sh',
             'setup.log',
+            'validation.sh',
+            'tests.log',
+            'tests.xml',
             'effective_config.json',
             'effective-config.receipt.json',
             'effective-config.log',
@@ -654,6 +685,11 @@ class _Attempt:
             names.update({'agent.diff', 'capture.json', 'triplets/index.json'})
         if self.row.setup.status not in ('skipped', 'not_started'):
             names.update({'setup.log'})
+        if self.row.tests is not None:
+            if self.row.tests.log is not None:
+                names.add('tests.log')
+            if self.row.tests.junit is not None:
+                names.add('tests.xml')
         if self.row.artifacts.effective_config.status == 'saved':
             names.update({'effective-config.receipt.json'})
         receipt = self.artifacts / 'telemetry/receipt.json'

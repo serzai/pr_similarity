@@ -1,0 +1,38 @@
+schema_version: 1
+workers: 1
+tags: [pandas-tests]
+agent:
+  name: pandas-tested
+  runtime: opencode:v1.18.33
+  auth:
+    mode: chatgpt_oauth
+    profile: ~/.local/share/prsimbm/chatgpt
+  config:
+    opencode_json:
+      model: openai/gpt-6.1-sol
+      provider:
+        openai:
+          models:
+            gpt-6.1-sol:
+              options:
+                reasoningEffort: medium
+      permission:
+        '*': allow
+      instructions:
+        - ./agent-pandas-tested.md
+  setup:
+    script: ./setup-pandas.sh
+    timeout_seconds: 900
+  validation:
+    script: ./validate-pandas.sh
+    timeout_seconds: 900
+  timeout_seconds: 1800
+  retries:
+    max_retries: 1
+    categories: []
+  credentials: {}
+sandbox:
+  backend: seatbelt
+  executable: /usr/bin/sandbox-exec
+  auto_install: false
+  toolchain: apple_clang

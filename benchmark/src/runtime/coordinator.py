@@ -23,6 +23,7 @@ from benchmark.execution.bin_projection import BinProjection
 from benchmark.execution.bubblewrap import resolve_bubblewrap
 from benchmark.execution.backends import resolve_seatbelt, sandbox_type, validate_backend_host
 from benchmark.execution.macos_git import prepare_macos_git
+from benchmark.execution.macos_toolchain import prepare_macos_toolchain
 from benchmark.execution.provisioning import Runtime, provision_opencode
 from benchmark.execution.python_runtime import prepare_python
 from benchmark.metrics.scoring import diagnostic_metrics, metric_receipt
@@ -200,13 +201,17 @@ def final_summary(report: Report) -> str:
     rows, summary = report.tasks, report.summary
     processed = sum(row.final_attempt is not None and row.final_attempt.finished_at is not None for row in rows)
     native_completed = sum(row.execution.status == 'completed' for row in rows)
-    return (
+    text = (
         f'Final: processed {processed}/{len(rows)}; tasks complete {summary.completed_tasks}/{len(rows)}; '
         f'native completed {native_completed}; timeout {summary.timeout_tasks}; '
         f'error {summary.error_tasks}; cancelled {summary.cancelled_tasks}; '
         f'scored {summary.scored_tasks}/{len(rows)}; '
         f'infrastructure errors {summary.infrastructure_error_tasks}.'
     )
+    if any(row.tests is not None for row in rows):
+        passed = sum(row.tests is not None and row.tests.status == 'passed' for row in rows)
+        text += f' Required tests passed {passed}/{len(rows)} tasks.'
+    return text
 
 
 def spend_summary(costs: ReportCostsAllAttempts) -> str:
@@ -312,7 +317,9 @@ class Coordinator:
                 active=self.report.summary.active_tasks,
                 retries=self.retries_started,
                 errors=sum(
-                    row.infrastructure_error is not None or row.scoring.status == 'error' for row in self.report.tasks
+                    row.infrastructure_error is not None or row.scoring.status == 'error'
+                    or (row.tests is not None and row.tests.status not in ('not_started', 'passed'))
+                    for row in self.report.tasks
                 ),
             )
 
@@ -464,7 +471,12 @@ class Coordinator:
         python = replace(python, bins=BinProjection(cancel=self.stop))
         git = (prepare_macos_git(Path(self.config.data.provisioning.cache_dir), cancel=self.stop)
                if self.config.data.sandbox.backend == 'seatbelt' else None)
-        self.runtime = replace(runtime, python=python, git=git)
+        toolchain = None
+        if self.config.data.sandbox.toolchain == 'apple_clang':
+            self.command.phase('toolchain')
+            toolchain = prepare_macos_toolchain(Path(self.config.data.provisioning.cache_dir), cancel=self.stop)
+            self.command.add_secret(str(toolchain.resolve()))
+        self.runtime = replace(runtime, python=python, git=git, toolchain=toolchain)
         if self.config.data.sandbox.backend == 'seatbelt':
             self.command.add_secret(str(python.root.resolve()))
             if git is not None:
@@ -515,10 +527,11 @@ class Coordinator:
                 root / 'runtime',
                 self.runtime.binary,
                 self.runtime.python,
-                **({'git': self.runtime.git} if self.config.data.sandbox.backend == 'seatbelt' else {}),
+                **({'git': self.runtime.git, 'toolchain': self.runtime.toolchain}
+                   if self.config.data.sandbox.backend == 'seatbelt' else {}),
             )
-            resolved = sandbox.preflight(cancel=self.stop)
             try:
+                resolved = sandbox.preflight(cancel=self.stop)
                 sandbox.prepare_python(cancel=self.stop, bindings=self.config.data.agent.env)
             finally:
                 sandbox.save_python_logs(self.command.logs_dir)
@@ -647,6 +660,7 @@ class Coordinator:
                 execution=row.execution.status,
                 scoring='scored' if row.scoring.status == 'available' else row.scoring.status,
                 attempt_sequence=selected.attempt.sequence,
+                tests=row.tests.status if row.tests is not None else None,
             )
         with self._phase_lock:
             self._phase_updates.pop(identifier, None)
@@ -714,6 +728,7 @@ class Coordinator:
                 row.infrastructure_error is not None
                 or row.scoring.status in ('error', 'unavailable')
                 or row.execution.status == 'error'
+                or (row.tests is not None and row.tests.status != 'passed')
                 for row in self.report.tasks
             )
             status, run_status = int(errors), 'completed_with_errors' if errors else 'completed'

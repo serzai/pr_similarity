@@ -35,10 +35,15 @@ agent:
       # For MCP/provider endpoint examples, see ../docs/configuration.md.
   timeout_seconds: 1800          # Agent time; excludes setup.
   setup: null                   # No setup script for the baseline.
+  validation: null              # Optional required test script; see pandas-macos-tested.yaml.
   # To enable setup, replace null with this mapping:
   # setup:
   #   script: ./setup-custom-tools.sh
   #   timeout_seconds: 300
+  # To require tests, replace validation null with:
+  # validation:
+  #   script: ./validate-pandas.sh
+  #   timeout_seconds: 900
   instructions_file: null        # Keep the built-in task prompt prefix.
   retries:
     max_retries: 1              # Additional attempts for infrastructure failures.
@@ -49,6 +54,7 @@ agent:
   # API-key alternative: {OPENAI_API_KEY: OPENAI_API_KEY} (sandbox name: host name).
 
 sandbox:
+  toolchain: null               # Explicit apple_clang snapshot for native C/C++ builds on macOS.
   backend: bubblewrap           # On macOS: seatbelt, executable: /usr/bin/sandbox-exec, auto_install: false.
   executable: bwrap
   auto_install: true            # Use the verified cached build if discovery is incompatible.

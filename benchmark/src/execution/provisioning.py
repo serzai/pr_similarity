@@ -36,6 +36,7 @@ class Runtime:
     receipt: ProvisioningReceipt
     python: PythonRuntime | None = None
     git: Path | None = None
+    toolchain: Path | None = None
 
 
 def select_asset() -> tuple[str, str]:

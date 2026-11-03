@@ -523,6 +523,11 @@ function makeTask(task) {
   summary.append(node('span', task.status === 'fail' ? 'FAIL' : task.status === 'OK' ? 'OK' : 'WARN · ' + statusLabels[task.status], 'badge ' + task.status), title, score, expand);
   const telemetry = node('span', 'Total Tokens: ', 'task-metrics'); telemetry.append(measurement(task.tokens.total), ' · Agent Time: ', durationView(task));
   telemetry.title = tokensTitle(task) + '\n' + timeTitle(task); summary.insertBefore(telemetry, expand);
+  if (task.tests) {
+    const counts = task.tests.counts;
+    const label = 'Tests: ' + task.tests.status + (counts ? ' · ' + counts.passed + '/' + counts.total + ' passed · ' + counts.skipped + ' skipped' : '');
+    summary.insertBefore(node('span', label, 'task-metrics'), expand);
+  }
   expand.setAttribute('aria-expanded', String(expandedTasks.has(task.task_id)));
   details.append(summary);
   let loaded = false;

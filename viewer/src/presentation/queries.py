@@ -300,6 +300,7 @@ def public_task(
         'title': task.title,
         'status': status,
         'scoring_status': task.scoring.status,
+        **({'tests': task.tests.to_wire()} if task.tests is not None else {}),
         'score': (
             (task.scoring.Mf_mlp if file_aggregation == 'Mf' else task.scoring.LCf_mlp)
             if task.scoring.status == 'available'

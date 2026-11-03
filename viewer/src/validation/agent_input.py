@@ -115,7 +115,9 @@ def validate_agent_input(
     for receipt in selected.resources:
         path = receipt.path
         if path in files or not (
-            path.startswith('agent/resources/') or path in {'agent/task_instructions.txt', 'agent/setup.sh'}
+            path.startswith('agent/resources/') or path in {
+                'agent/task_instructions.txt', 'agent/setup.sh', 'agent/validation.sh'
+            }
         ):
             raise ViewerError('invalid_agent_input', 'Shared resource has an unexpected owner path.')
         files[path] = _verify_file(receipt, inventory, read_file)
@@ -127,6 +129,11 @@ def validate_agent_input(
         used.add('agent/setup.sh')
         if digest(files.get('agent/setup.sh', b'')) != _identity_member(setup, 'sha256'):
             raise ViewerError('resource_changed', 'Frozen setup differs from identity.')
+    validation = identity_raw.get('validation')
+    if validation is not None:
+        used.add('agent/validation.sh')
+        if digest(files.get('agent/validation.sh', b'')) != _identity_member(validation, 'sha256'):
+            raise ViewerError('resource_changed', 'Frozen validation differs from identity.')
     resources = identity_raw['resources']
     assert isinstance(resources, list)
     for resource in resources:

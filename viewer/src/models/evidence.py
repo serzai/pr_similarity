@@ -22,6 +22,7 @@ from .report import (
     ReportInfra,
     ReportMetric,
     ReportPhase,
+    ReportTests,
     ReportSourceDescriptor,
     ReportTaskChanges,
     ReportTaskExecution,
@@ -128,6 +129,7 @@ class NativeTask(WireModel):
     id: str
     final_attempt: ReportAttempt | None
     setup: ReportPhase
+    tests: ReportTests | None = None
     execution: ReportTaskExecution
     changes: ReportTaskChanges
     telemetry: NativeTelemetry
@@ -313,6 +315,7 @@ class ConfigIdentity(WireModel):
     instructions: IdentityInstructions | None = None
     resources: list[IdentityResource] | None = None
     setup: IdentitySetup | None = None
+    validation: IdentitySetup | None = None
 
 
 class OperationOwner(NativeOwner):

@@ -85,4 +85,5 @@ jobs:
         run: >-
           .venv/bin/python -m pytest
           'tests/test_producer_roundtrip.py::test_actual_producer_archive_publishes_and_serves_all_role_pairs[3-False]'
-          tests/test_python_probe_contract.py tests/test_archive.py tests/test_models.py
+          tests/test_python_probe_contract.py tests/test_archive.py tests/test_models.py tests/test_test_results.py
+          tests/test_operations.py

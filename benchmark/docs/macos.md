@@ -79,9 +79,11 @@ Use `python`, `python3`, `pip` and `git` from PATH in setup scripts and tools.
 Absolute system Python is denied; absolute `/usr/bin/git` still invokes Apple's
 shim. Unlike Linux bind mounts, Seatbelt cannot redirect these absolute paths.
 Host Homebrew programs, compilers/SDKs, GUI frameworks and Xcode trees are not
-implicitly exposed. Building compiled target dependencies and native MCP/tool
-bundles needs further toolchain support; use supported private installations and
-binary wheels where appropriate. Linux setup scripts using apt, GNU-only flags
+implicitly exposed. For C/C++ source builds, explicitly enable the measured
+private Apple toolchain with `sandbox.toolchain: apple_clang`; see the
+[pandas build and required-test recipe](functional-validation.md). Other native
+tool bundles still need supported private installations and binary wheels where
+appropriate. Linux setup scripts using apt, GNU-only flags
 or `/repo` literals need platform-specific equivalents.
 
 The policy denies host HOME, sibling attempts, original Git cache/history and

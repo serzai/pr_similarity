@@ -94,6 +94,21 @@ def install() -> None:
             original(self)
 
         attempt._Attempt.prepare = prepare
+    elif BOUNDARY == 'testing':
+        from benchmark.execution.backends import sandbox_type
+
+        backend = sandbox_type('seatbelt' if platform.system() == 'Darwin' else 'bubblewrap')
+        original_process = backend.run_process
+
+        def process(self, argv, **options):
+            if any(str(item).endswith('/validation.sh') for item in argv):
+                def ready(line):
+                    if 'TESTING_READY' in line:
+                        pause(next((ROOT / 'runs').iterdir()))
+                options['on_stdout'] = ready
+            return original_process(self, argv, **options)
+
+        backend.run_process = process
     elif BOUNDARY == 'seal':
         original_score = attempt._Attempt.score
 

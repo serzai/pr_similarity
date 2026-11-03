@@ -63,6 +63,7 @@ from viewer.validation.python_evidence import validate_python_attempt
 from viewer.validation.schema import validate_document as validate_document
 from viewer.validation.schema import validator as validator
 from viewer.validation.triplet_paths import triplet_path
+from viewer.validation.test_results import validate_test_evidence, validate_test_summary
 
 __all__ = ['require', 'validate_document', 'validate_identity', 'validate_report', 'validator']
 
@@ -98,6 +99,7 @@ def validate_report(report: object) -> Report:
     counts['scored_tasks'] = sum(t.scoring.status == 'available' for t in tasks)
     require(counts == report.summary.to_wire())
     for task in tasks:
+        validate_test_summary(task.tests)
         _validate_scores(task)
     return report
 
@@ -466,6 +468,9 @@ def _validate_registered_attempt(
         )
     start, seal = store.document(prefix + 'start.json', Start), store.document(prefix + 'seal.json', Seal)
     require(seal.matches_agent_input(store.registry.agent_input), 'invalid_agent_input')
+    identity = store.document('config_identity.json', ConfigIdentity)
+    require((seal.task.tests is not None) == (identity.validation is not None), 'invalid_test_evidence')
+    validate_test_evidence(seal.task.tests, prefix, store.inventory, store.read_file)
     validate_python_attempt(seal, store, prefix)
     if store.registry.schema_version == 2:
         require(seal.python_runtime is not None, 'invalid_state')
@@ -503,6 +508,7 @@ def _validate_registered_attempt(
         (outcome.task.id, seal.task.id),
         (outcome.task.final_attempt, seal.task.final_attempt),
         (outcome.task.setup, seal.task.setup),
+        (outcome.task.tests, seal.task.tests),
         (outcome.task.execution, seal.task.execution),
         (outcome.task.changes, seal.task.changes),
         (outcome.task.telemetry, seal.task.telemetry),
@@ -527,6 +533,7 @@ def _validate_selected_row(
     for left, right in (
         (task.final_attempt, native.final_attempt),
         (task.setup, native.setup),
+        (task.tests, native.tests),
         (task.execution, native.execution),
         (task.changes, native.changes),
     ):
@@ -645,6 +652,9 @@ def _validate_archive_task(
 ) -> None:
     """Check frozen task ownership and all selected native/public artifact references."""
     _reference(task.changes.diff, inventory)
+    if task.tests is not None and task.final_attempt is not None:
+        prefix = task.directory + f'/attempts/{task.final_attempt.sequence:03d}/'
+        validate_test_evidence(task.tests, prefix, inventory, read_file)
     for path in (
         task.artifacts.outcome,
         task.artifacts.triplets_manifest,

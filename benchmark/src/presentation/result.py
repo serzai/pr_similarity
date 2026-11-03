@@ -27,6 +27,7 @@ from benchmark.models.report import (
 )
 from benchmark.models.sources import SourceDescriptor
 from benchmark.validation.contracts import validate_document
+from benchmark.validation.test_evidence import validate_test_summary
 
 
 def unavailable_scoring(
@@ -107,6 +108,7 @@ def project_task(row: TaskDraft, ordinal: int, directory: str, progress: ReportT
         directory=directory,
         progress=progress,
         locations=row.locations,
+        **({'tests': row.tests} if 'tests' in row.model_fields_set else {}),
     )
 
 
@@ -140,6 +142,7 @@ def validate_report(report: Report | JsonObject) -> Report:
     if len(ids) != len(set(ids)):
         raise BenchmarkError('invalid_report', 'Report contains duplicate PR identities.', exit_code=1)
     for row in report.tasks:
+        validate_test_summary(row.tests)
         SourceDescriptor.from_model(row.source)
         score = row.scoring
         if score.status != 'available':

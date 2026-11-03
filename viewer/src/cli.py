@@ -1,5 +1,6 @@
 """Make-backed daemon lifecycle and private HTTP administration."""
 
+import ctypes
 import fcntl
 import getpass
 import json
@@ -77,7 +78,30 @@ def _request(config: Config, method: str, path: str, body: dict | None = None, a
 
 
 def _identity(pid: object) -> str | None:
-    """Read Linux process start ticks without confusing a reused PID."""
+    """Read a live kernel process identity without confusing a reused PID."""
+    if type(pid) is not int or pid <= 0:
+        return None
+    if sys.platform == 'darwin':
+        # XNU proc_info: proc_uniqidentifierinfo is 56 bytes; proc_bsdshortinfo is 64.
+        # Read only identity/status/UID, never process arguments or environment.
+        library = ctypes.CDLL('/usr/lib/libproc.dylib')
+        library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        library.proc_pidinfo.restype = ctypes.c_int
+        def read(flavor: int) -> bytes | None:
+            size = 56 if flavor == 17 else 64
+            buffer = ctypes.create_string_buffer(size)
+            return buffer.raw if library.proc_pidinfo(pid, flavor, 0, buffer, size) == size else None
+        unique, info, verified = read(17), read(13), read(17)
+        if unique is None or info is None or verified is None:
+            return None
+        identity = unique[16:24]  # Birth identity survives exec; PID version does not.
+        if identity != verified[16:24]:
+            return None
+        if int.from_bytes(info[12:16], sys.byteorder) == 5:  # SZOMB cannot run.
+            return None
+        if int.from_bytes(info[36:40], sys.byteorder) != os.getuid():
+            return None
+        return 'darwin:' + identity.hex()
     try:
         # Linux field 22, accounting for a parenthesized command name.
         fields = Path('/proc/' + str(pid) + '/stat').read_text().rsplit(')', 1)[1].split()
@@ -93,7 +117,7 @@ def _running(config: Config) -> ProcessRecord | None:
         return None
     raw = require_object(parse_json(path.read_bytes()))
     value = ProcessRecord(raw['pid'], raw['start_ticks'])
-    return value if _identity(value.pid) == value.start_ticks else None
+    return value if value.start_ticks is not None and _identity(value.pid) == value.start_ticks else None
 
 
 def _create_token(config: Config) -> None:

@@ -62,6 +62,7 @@ class ConfigIdentity(WireModel):
     native_config: ValidatedJsonObject
     timeout_seconds: int | float
     setup: IdentitySetup | None
+    validation: IdentitySetup | None = None
     instructions: IdentityInstructions
     resources: list[IdentityResource]
     retries: IdentityRetries

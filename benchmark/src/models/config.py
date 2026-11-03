@@ -50,6 +50,7 @@ class AgentConfiguration(WireModel):
     config: AgentNativeConfig
     timeout_seconds: int
     setup: AgentSetup | None
+    validation: AgentSetup | None = None
     instructions_file: str | None
     retries: IdentityRetries
     diff_excludes: list[str]
@@ -64,6 +65,7 @@ class SandboxConfiguration(WireModel):
     backend: Literal['bubblewrap', 'seatbelt']
     executable: str
     auto_install: bool
+    toolchain: Literal['apple_clang'] | None = None
 
 
 class ShutdownConfiguration(WireModel):

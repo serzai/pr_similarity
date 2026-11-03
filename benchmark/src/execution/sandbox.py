@@ -282,7 +282,7 @@ class Sandbox:
 
     def save_python_logs(self, destination: Path) -> None:
         """Retain credential-free preparation logs before private state is deleted."""
-        for name in ('python-prepare.log', 'python-check.log'):
+        for name in ('python-prepare.log', 'python-check.log', 'compiler-check.log'):
             source = self.runtime_files / name
             if source.is_file():
                 destination.mkdir(parents=True, exist_ok=True)

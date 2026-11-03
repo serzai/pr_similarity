@@ -9,6 +9,7 @@ you can view the results locally or publish them to a compatible viewer.
 Start with [setup and login](#quick-start), then use the guide for your next task:
 
 - [Configure setup, skills, rules and exclusions](docs/configuration.md#configure-your-agent)
+- [Build pandas and require project tests](docs/functional-validation.md)
 - [Connect MCP or a RAG CLI in bubblewrap](docs/integrations.md#connect-mcp-and-rag)
 - [Find a task's logs, diff and scores](docs/results.md#find-your-results)
 - [Estimate cost with a pricing policy](docs/pricing.md#estimate-cost-with-reprice)

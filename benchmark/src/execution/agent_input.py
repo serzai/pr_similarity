@@ -143,6 +143,13 @@ def freeze_agent_input(directory: Path, config: RunConfig) -> ReportAgentInput:
         if bytes_sha256(content) != identity.setup.sha256:
             raise BenchmarkError('resource_changed', 'Setup resource changed after config validation.')
         atomic_write(agent / 'setup.sh', content)
+    validation = config.data.agent.validation
+    if validation is not None:
+        content = Path(validation.script).read_bytes()
+        assert identity.validation is not None
+        if bytes_sha256(content) != identity.validation.sha256:
+            raise BenchmarkError('resource_changed', 'Validation resource changed after config validation.')
+        atomic_write(agent / 'validation.sh', content)
     write_json(agent / 'opencode.json', native, preserve_order=True)
     resources = []
     secrets = [os.environ.get(source, '') for source in config.data.agent.credentials.values()]
@@ -190,7 +197,9 @@ def validate_agent_input(directory: Path, selected: ReportAgentInput, identity: 
     for receipt in selected.resources:
         path = receipt.path
         if path in files or not (
-            path.startswith('agent/resources/') or path in {'agent/task_instructions.txt', 'agent/setup.sh'}
+            path.startswith('agent/resources/') or path in {
+                'agent/task_instructions.txt', 'agent/setup.sh', 'agent/validation.sh'
+            }
         ):
             raise BenchmarkError('invalid_agent_input', 'Shared resource has an unexpected owner path.')
         files[path] = _verify_file(directory, receipt)
@@ -201,6 +210,10 @@ def validate_agent_input(directory: Path, selected: ReportAgentInput, identity: 
         used.add('agent/setup.sh')
         if bytes_sha256(files.get('agent/setup.sh', b'')) != identity.setup.sha256:
             raise BenchmarkError('resource_changed', 'Frozen setup differs from identity.')
+    if identity.validation is not None:
+        used.add('agent/validation.sh')
+        if bytes_sha256(files.get('agent/validation.sh', b'')) != identity.validation.sha256:
+            raise BenchmarkError('resource_changed', 'Frozen validation differs from identity.')
     semantic = _identity_native(native)
     assert isinstance(semantic, dict)
     expected = {(r.field, r.index): r for r in identity.resources}

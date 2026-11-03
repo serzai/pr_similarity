@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add opt-in required project tests with independently checked JUnit receipts,
+  sealed per-task status, console/viewer/HTML display and failed-run propagation.
+- Add a measured readonly Apple C/C++ toolchain and a native pandas source-build
+  recipe with pinned dependencies and required regression tests.
+- Use macOS kernel process identities for local viewer lifecycle commands.
 - Add an explicit experimental macOS Seatbelt backend, Darwin OpenCode assets,
   a relocated package-free Python 3.12 and a content-verified Apple Git snapshot.
 - Supervise native processes in private launchd coalitions, including detached

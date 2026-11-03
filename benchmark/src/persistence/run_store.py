@@ -479,6 +479,7 @@ class RunStore:
             if (
                 left.final_attempt != right.final_attempt
                 or left.setup != right.setup
+                or left.tests != right.tests
                 or left.execution != right.execution
                 or left.changes != right.changes
                 or left.telemetry != right.telemetry
@@ -585,6 +586,13 @@ class RunStore:
             content = artifact_path(self.directory, item.path, must_exist=True).read_bytes()
             if len(content) != item.size_bytes or bytes_sha256(content) != item.sha256:
                 raise BenchmarkError('artifact_digest_mismatch', 'Sealed attempt evidence is damaged.')
+        from benchmark.validation.test_evidence import validate_test_evidence
+
+        identity = ConfigIdentity.model_validate(read_json(self.directory / 'config_identity.json'))
+        validate_test_evidence(
+            self.directory, row.tests, self.attempt_directory(row.id, attempt.sequence).as_posix() + '/',
+            value.artifact_receipts, required=identity.validation is not None,
+        )
         self._facts_cache[cache_key] = row
         return row
 

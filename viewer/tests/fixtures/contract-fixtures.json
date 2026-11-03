@@ -1,7 +1,7 @@
 {
   "src/schemas/report-v2.json": {
     "source": "benchmark/src/schemas/benchmark-report-v2.schema.json",
-    "sha256": "f4cebe203720fcc597d5cf84b75fa0912d5a4e3870f3967eac6214021660b248"
+    "sha256": "5629d06644d2cc8c540470c14a10bcfe390d78e3fd5448700c3c15cd52b83296"
   },
   "src/schemas/archive-v2.json": {
     "source": "benchmark/src/schemas/benchmark-manifest-v1.schema.json",

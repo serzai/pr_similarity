@@ -24,6 +24,8 @@ def task_status(task: ReportTask) -> str:
     """Classify the final task outcome from execution and capture state."""
     if task.infrastructure_error or task.processing_status != 'completed':
         return 'fail'
+    if task.tests is not None and task.tests.status != 'passed':
+        return 'timeout' if task.tests.status == 'timeout' else 'fail'
     execution = task.execution.status
     if execution == 'timeout':
         return 'timeout'

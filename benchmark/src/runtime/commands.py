@@ -331,15 +331,20 @@ class Command:
         if self.progress is not None:
             self.progress.task_result(task_id, mf=mf, lcf=lcf)
 
-    def task_finish(self, task_id: str, *, execution: str, scoring: str, attempt_sequence: int | None = None) -> None:
+    def task_finish(
+        self, task_id: str, *, execution: str, scoring: str,
+        attempt_sequence: int | None = None, tests: str | None = None,
+    ) -> None:
         """Append a terminal outcome after durable selection, then release the task label."""
         if attempt_sequence is not None and task_id in self._task_labels:
             self._task_labels[task_id] = (self._task_labels[task_id][0], attempt_sequence)
         label = self._task_label(task_id)
         if label is not None:
-            self._human_log(f'{label} · {execution} · {scoring}')
+            self._human_log(f'{label} · {execution} · {scoring}' + (f' · tests {tests}' if tests else ''))
         if self.progress is not None:
-            self.progress.task_finish(task_id, execution=execution, scoring=scoring, attempt_sequence=attempt_sequence)
+            self.progress.task_finish(
+                task_id, execution=execution, scoring=scoring, attempt_sequence=attempt_sequence, tests=tests,
+            )
             self.progress.worker_done(task_id)
         self._task_labels.pop(task_id, None)
 

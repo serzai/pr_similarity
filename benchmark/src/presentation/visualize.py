@@ -139,6 +139,8 @@ def _status(row: ReportTask) -> str:
     """Use the viewer's final-outcome categories independently of scoring."""
     if row.infrastructure_error or row.processing_status != 'completed':
         return 'fail'
+    if row.tests is not None and row.tests.status != 'passed':
+        return 'timeout' if row.tests.status == 'timeout' else 'fail'
     if row.execution.status == 'timeout':
         return 'timeout'
     if row.execution.status == 'completed':
@@ -230,6 +232,7 @@ def _task(row: ReportTask, index: int, *, has_diffs: bool = False) -> str:
         + _text(row.processing_status)
         + ' · Execution: '
         + _text(row.execution.status)
+        + (' · Required tests: ' + _text(row.tests.status) if row.tests is not None else '')
         + ' · Changes: '
         + _text(row.changes.status)
         + '</p>'

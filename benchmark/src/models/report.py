@@ -320,6 +320,30 @@ class ReportTaskProgress(WireModel):
     updated_at: str | None
 
 
+class ReportTestCounts(WireModel):
+    """Record executed JUnit case outcomes independently of similarity."""
+
+    schema_pointer: ClassVar[str] = '#/$defs/task/properties/tests/anyOf/0/properties/counts/anyOf/0'
+    total: int
+    passed: int
+    failed: int
+    errors: int
+    skipped: int
+
+
+class ReportTests(WireModel):
+    """Bind required test execution to its public log and JUnit evidence."""
+
+    schema_pointer: ClassVar[str] = '#/$defs/task/properties/tests/anyOf/0'
+    status: Literal['not_started', 'passed', 'failed', 'error', 'timeout', 'cancelled']
+    exit_code: int | None
+    duration_seconds: int | float | None
+    counts: ReportTestCounts | None
+    log: str | None
+    junit: ArtifactReceipt | None
+    reason: str | None
+
+
 class TaskDraft(WireModel):
     """Hold mutable native task facts before registry projection is complete."""
 
@@ -338,6 +362,7 @@ class TaskDraft(WireModel):
     ]
     final_attempt: ReportAttempt | None
     setup: ReportPhase
+    tests: ReportTests | None = None
     execution: ReportTaskExecution
     infrastructure_error: ReportInfra | None
     changes: ReportTaskChanges

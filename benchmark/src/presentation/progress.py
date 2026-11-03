@@ -155,6 +155,7 @@ class Progress:
         execution: str,
         scoring: str,
         attempt_sequence: int | None = None,
+        tests: str | None = None,
     ) -> None:
         """Freeze a single final row only after the coordinator saved its outcome."""
         with self._lock:
@@ -177,6 +178,8 @@ class Progress:
             if task.elapsed is None:
                 task.elapsed = max(0, self.clock() - task.started)
             task.phase = f'{execution} · {scoring}'
+            if tests is not None:
+                task.phase += f' · tests {tests}'
             self._task_messages.append((self._task_line(task), True))
             self._force = True
 

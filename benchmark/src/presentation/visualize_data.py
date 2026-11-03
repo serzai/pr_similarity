@@ -154,6 +154,8 @@ def display_metrics(report: Report, measurements: dict[str, TaskMeasurements] | 
         """Keep the established final-attempt task selection semantics."""
         if task.infrastructure_error or task.processing_status != 'completed':
             return 'fail'
+        if task.tests is not None and task.tests.status != 'passed':
+            return 'timeout' if task.tests.status == 'timeout' else 'fail'
         if task.execution.status == 'timeout':
             return 'timeout'
         if task.execution.status == 'completed':

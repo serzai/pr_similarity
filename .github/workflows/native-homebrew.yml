@@ -51,7 +51,7 @@ jobs:
         working-directory: viewer
         run: make setup PYTHON="$PRSIM_HOMEBREW_PYTHON"
       - name: Native Python relocation and isolation
-        run: .venv/bin/python -m pytest tests/test_macos_python.py
+        run: .venv/bin/python -m pytest tests/test_macos_python.py tests/test_macos_toolchain.py
       - name: Native workflow and portable evidence
         run: >-
           .venv/bin/python -m pytest
@@ -61,4 +61,5 @@ jobs:
         run: >-
           .venv/bin/python -m pytest
           'tests/test_producer_roundtrip.py::test_actual_producer_archive_publishes_and_serves_all_role_pairs[3-False]'
-          tests/test_python_probe_contract.py tests/test_archive.py tests/test_models.py
+          tests/test_python_probe_contract.py tests/test_archive.py tests/test_models.py tests/test_test_results.py
+          tests/test_operations.py
