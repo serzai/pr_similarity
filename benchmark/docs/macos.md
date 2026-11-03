@@ -3,11 +3,12 @@
 # Native macOS execution (experimental)
 
 The benchmark can run directly on macOS with `sandbox.backend: seatbelt`.
-Validated hosts include macOS 26.1 ARM64 with python.org Python 3.12.0 and the
-macOS 15 ARM64 GitHub runner with Python 3.12.10 and Apple Command Line Tools.
-Homebrew Python and the complete Intel matrix still need independent validation.
-Linux remains the production
-baseline; the collector and viewer server retain their existing platform support.
+Validated layouts include macOS 26.1 ARM64 with python.org Python 3.12.0, the
+macOS 15 ARM64 GitHub runner with Python 3.12.10, and Homebrew Python on macOS 15
+ARM64 (3.12.16) and Intel (3.12.14), with Apple Command Line Tools. The Homebrew
+checks cover private Python, a native offline workflow and independent archive
+import. Linux remains the production baseline; the collector and viewer server
+retain their existing platform support.
 
 ## Prepare and run
 
@@ -24,6 +25,13 @@ native example:
 make setup PYTHON=python3.12
 make auth CONFIG=examples/macos.yaml AUTH_FLOW=headless
 make run CONFIG=examples/macos.yaml DATASET=/path/to/basket.json OUTPUT=./output
+```
+
+For an existing Homebrew installation, select its interpreter explicitly during
+setup if another Python installation takes precedence in PATH:
+
+```sh
+make setup PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
 ```
 
 The auth command logs into your private ChatGPT OAuth profile. To use an API key,

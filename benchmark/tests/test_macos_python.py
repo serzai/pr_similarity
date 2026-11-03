@@ -130,7 +130,7 @@ def test_private_python_probe_and_package_install(sandbox: SeatbeltSandbox) -> N
             'Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n',
         )
         archive.writestr('native_fixture-0.0.1.dist-info/RECORD', '')
-    result = invoke(sandbox, ['python', '-m', 'pip', 'install', '--no-index', '--no-deps', str(wheel)])
+    result = invoke(sandbox, ['pip', 'install', '--no-index', '--no-deps', str(wheel)])
     assert result.returncode == 0, result.stderr
     result = invoke(sandbox, ['python3.12', '-c', 'import native_fixture;print(native_fixture.VALUE)'])
     assert result.returncode == 0 and result.stdout.strip() == '42', result.stderr
@@ -152,6 +152,32 @@ def test_private_python_loads_system_trust_without_host_framework_access(sandbox
     assert bundle == '/private/etc/ssl/cert.pem'
     private_ca = str(sandbox.home / 'project-ca.pem')
     assert sandbox.environment({'SSL_CERT_FILE': private_ca})['SSL_CERT_FILE'] == private_ca
+
+
+@native
+@pytest.mark.parametrize('entrypoint', ['python', 'python3', 'python3.12', 'pip', 'pip3', 'pip3.12'])
+def test_direct_entrypoints_select_private_venv(sandbox: SeatbeltSandbox, entrypoint: str) -> None:
+    sandbox.prepare_python()
+    arguments = ([entrypoint, '--version'] if entrypoint.startswith('pip') else
+                 [entrypoint, '-c', 'import sys;print(sys.prefix)'])
+    result = invoke(sandbox, arguments)
+    assert result.returncode == 0, result.stderr
+    venv = str(sandbox.home.resolve() / '.venv')
+    if entrypoint.startswith('pip'):
+        assert venv + '/lib/python3.12/site-packages/pip' in result.stdout
+    else:
+        assert result.stdout.strip() == venv
+
+
+@native
+def test_env_shebang_selects_private_python(sandbox: SeatbeltSandbox) -> None:
+    sandbox.prepare_python()
+    script = sandbox.source / 'native-entrypoint.py'
+    script.write_text('#!/usr/bin/env python3\nimport sys;print(sys.prefix)\n')
+    script.chmod(0o755)
+    result = invoke(sandbox, ['./native-entrypoint.py'])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(sandbox.home.resolve() / '.venv')
 
 
 @native

@@ -100,8 +100,9 @@ files currently live in a private attempt directory, not a Linux tmpfs.
 - [x] Discover private Mach-O dependencies with `otool`, including framework
   builds, `@loader_path`, `@executable_path`, `@rpath`, extensions and transitive
   shared libraries. Rpaths are anchored to the binary owning each load command.
-- [ ] Validate real Homebrew and Intel installations; only python.org framework
-  Python 3.12 on macOS 26.1 ARM64 has been tested so far.
+- [x] Validate real Homebrew ARM64/Intel installations through private Python,
+  native workflow and independent consumer checks on macOS 15, in addition to
+  python.org framework Python on macOS 26.1 ARM64.
 - [x] Prototype relocation of a package-free copy of the setup interpreter.
   Account for framework lookup, loader install names and code signatures before
   choosing a supported layout. Reject unsupported installations explicitly.
@@ -112,6 +113,8 @@ files currently live in a private attempt directory, not a Linux tmpfs.
   protected absolute system Python. System command directories are not modified.
 - [ ] Validate direct `pip`/`pip3`, other interpreter entrypoints and shebangs on
   both supported architectures before advertising the complete command contract.
+  Local framework entrypoints passed; seven new native regression cases now run
+  in the platform and Homebrew matrices.
 - [x] Test ssl/sqlite3/lzma/bz2/zlib, offline wheel installation, source module
   shadowing, separate attempt packages, deterministic snapshots and preparation
   cancellation. Verify Python setup, fake-agent events and durable native probes
@@ -380,4 +383,13 @@ A separate Homebrew workflow installs into disposable hosted runners on both
 architectures and selects the formula's absolute executable. It skips linking
 over the image's python.org commands and compares resolved base-prefix paths
 against the selected Homebrew prefix. It checks relocation, isolation, native
-workflow and the independent viewer consumer; its results remain pending.
+workflow and the independent viewer consumer. At `72201da`, both Homebrew jobs
+passed: Python 3.12.16 ARM64 and 3.12.14 Intel, each with 15 Python checks, the
+native workflow and 61 independent consumer checks. The additional direct
+entrypoint regressions are pending the next matrix.
+
+The direct-entrypoint tests exposed an older bundled pip quoting bug when the
+native attempt path contains a double quote. Native venv preparation now writes
+shell-quoted `pip`/`pip3`/`pip3.12` wrappers around the private Python's `-m pip`.
+The wheel-install fixture invokes direct `pip` from a Unicode/quoted path;
+sandbox identity includes this launcher policy for resume compatibility.

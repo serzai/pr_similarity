@@ -2,6 +2,7 @@
 
 import json
 import platform
+import shlex
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -263,7 +264,9 @@ class SeatbeltSandbox(Sandbox):
         return SandboxReceipt(
             backend='seatbelt',
             version=(platform.mac_ver()[0] + ':'
-                     + bytes_sha256((_PROFILE + repr(_SYSTEM_READS) + ':coalition-v1:system-ca-v1').encode())
+                     + bytes_sha256((
+                         _PROFILE + repr(_SYSTEM_READS) + ':coalition-v1:system-ca-v1:pip-entrypoints-v1'
+                     ).encode())
                      + (':git-' + self.git.name if self.git is not None else '')),
             binary_sha256=bytes_sha256(Path('/usr/bin/sandbox-exec').read_bytes()),
             network='shared',
@@ -287,6 +290,13 @@ class SeatbeltSandbox(Sandbox):
             target = venv / 'bin' / name
             if not target.exists():
                 target.symlink_to(venv / 'bin/python3.12')
+        # Older bundled pip versions misquote paths containing double quotes.
+        # A shell entrypoint also avoids the kernel's shebang length limit.
+        pip_launcher = '#!/bin/sh\nexec ' + shlex.quote(str(venv / 'bin/python')) + ' -m pip "$@"\n'
+        for name in ('pip', 'pip3', 'pip3.12'):
+            target = venv / 'bin' / name
+            target.write_text(pip_launcher, encoding='utf-8')
+            target.chmod(0o755)
         return self.check_python(timeout=timeout, cancel=cancel, bindings=bindings)
 
     def check_python(
