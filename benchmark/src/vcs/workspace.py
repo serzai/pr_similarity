@@ -1,6 +1,7 @@
 """Fresh before-only workspaces and Git diff plus nonignored untracked files."""
 
 import stat
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -80,26 +81,36 @@ def prepare_workspace(cache: VCS, before: str, root: Path, relative_cwd: str) ->
         raise BenchmarkError('workspace_exists', 'A fresh attempt needs a new empty workspace path.', exit_code=1)
     root.mkdir(parents=True, mode=0o700)
     root = root.resolve()
+    tree = cache.tree(before)
+    if any(entry.mode not in _REGULAR_MODES | {'120000'} for entry in tree.values()):
+        raise BenchmarkError(
+            'unsupported_snapshot', 'This revision contains a Git submodule or unsupported file mode.', exit_code=1
+        )
     links = []
-    for path, entry in cache.tree(before).items():
-        destination = root / path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if entry.mode not in _REGULAR_MODES | {'120000'}:
-            raise BenchmarkError(
-                'unsupported_snapshot', 'This revision contains a Git submodule or unsupported file mode.', exit_code=1
-            )
-        content = cache.blob(entry)
-        if content.startswith(_LFS):
-            raise BenchmarkError(
-                'unsupported_snapshot', 'This revision requires Git LFS contents, which v1 does not fetch.', exit_code=1
-            )
-        if entry.mode == '120000':
-            links.append((destination, content.decode('utf-8')))
-        else:
-            destination.write_bytes(content)
+    with closing(cache.blobs(list(tree.values()))) as contents:
+        for (path, entry), content in zip(tree.items(), contents, strict=True):
+            destination = root / path
+            if content.startswith(_LFS):
+                raise BenchmarkError(
+                    'unsupported_snapshot', 'This revision requires Git LFS contents, which v1 does not fetch.', exit_code=1
+                )
+            try:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if entry.mode == '120000':
+                    links.append((destination, content.decode('utf-8')))
+                    continue
+                with destination.open('xb') as stream:
+                    stream.write(content)
+            except (FileExistsError, NotADirectoryError) as exc:
+                raise BenchmarkError(
+                    'unsafe_snapshot', 'Source paths collide on the workspace filesystem.', exit_code=1
+                ) from exc
             destination.chmod(0o755 if entry.mode == '100755' else 0o644)
     for destination, target in links:
-        destination.symlink_to(target)
+        try:
+            destination.symlink_to(target)
+        except FileExistsError as exc:
+            raise BenchmarkError('unsafe_snapshot', 'Source paths collide on the workspace filesystem.') from exc
     for destination, _target in links:
         try:
             resolved = destination.resolve()
@@ -107,15 +118,20 @@ def prepare_workspace(cache: VCS, before: str, root: Path, relative_cwd: str) ->
             raise BenchmarkError(
                 'unsafe_snapshot', 'The source snapshot contains an unsafe symlink.', exit_code=1
             ) from exc
-        if not resolved.is_relative_to(root) or '.git' in resolved.relative_to(root).parts:
+        if not resolved.is_relative_to(root) or any(part.casefold() == '.git' for part in resolved.relative_to(root).parts):
             raise BenchmarkError(
                 'unsafe_snapshot', 'A source symlink points outside the snapshot or into Git metadata.', exit_code=1
             )
+    if (root / '.git').exists() or (root / '.git').is_symlink():
+        raise BenchmarkError('unsafe_snapshot', 'Source paths collide with Git metadata.', exit_code=1)
     run_git(['init', '-q', str(root)], timeout=cache.timeout, stop=cache.stop)
     run_git(['config', 'core.autocrlf', 'false'], cwd=root)
     # Prevent repository attributes from transforming source bytes during capture.
     (root / '.git/info/attributes').write_text('* -filter -text -ident -working-tree-encoding\n')
     run_git(['add', '--force', '--all', '--', '.'], cwd=root)
+    expected_tree = cache.tree_id(before)
+    if run_git(['write-tree'], cwd=root).decode('ascii').strip() != expected_tree:
+        raise BenchmarkError('unsafe_snapshot', 'The workspace filesystem changed frozen source paths or modes.', exit_code=1)
     run_git(['commit', '--quiet', '--allow-empty', '-m', 'Benchmark before snapshot'], cwd=root)
     baseline = run_git(['rev-parse', 'HEAD'], cwd=root).decode().strip()
     cwd = root if relative_cwd == '.' else root / relative_cwd

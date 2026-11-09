@@ -1,5 +1,6 @@
 """Benchmark-owned object operations needed for frozen workspaces and triplets."""
 
+from collections.abc import Generator
 from threading import Event
 from typing import Protocol
 
@@ -23,6 +24,14 @@ class VCS(Protocol):
 
     def blob(self, entry: TreeEntry) -> bytes:
         """Read verified bytes for an immutable blob."""
+        ...
+
+    def tree_id(self, revision: str) -> str:
+        """Return the root tree identity of a frozen commit."""
+        ...
+
+    def blobs(self, entries: list[TreeEntry]) -> Generator[bytes, None, None]:
+        """Read verified blob bytes in request order."""
         ...
 
     def verify_reference(self, row: BasketRecord) -> None:

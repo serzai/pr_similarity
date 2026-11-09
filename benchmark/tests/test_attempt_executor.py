@@ -1,6 +1,7 @@
 """Native sealing precedes host scoring and cannot be replaced by a retry."""
 
 import copy
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -76,6 +77,19 @@ class MemoryCache:
     def blob(self, entry: TreeEntry) -> bytes:
         """Return distinct source contents for agent isolation assertions."""
         return b'base = 1\n' if entry.oid == 'before' else b'human = 2\n'
+
+    def blobs(self, entries):
+        """Yield the same fixture contents in tree order."""
+        yield from (self.blob(entry) for entry in entries)
+
+    def tree_id(self, revision: str) -> str:
+        """Compute the fixture's nested tree identity from its frozen bytes."""
+        def git_hash(kind: str, data: bytes) -> bytes:
+            return hashlib.sha1(f'{kind} {len(data)}\0'.encode() + data).digest()
+
+        entry = self.tree(revision)['new/source.py']
+        directory = git_hash('tree', b'100644 source.py\0' + git_hash('blob', self.blob(entry)))
+        return git_hash('tree', b'40000 new\0' + directory).hex()
 
 
 def reservation(

@@ -12,7 +12,7 @@ from benchmark.models.basket import BasketRecord, ChangedFile
 from benchmark.persistence.storage import read_json, write_json
 from benchmark.persistence.triplets import load_triplets, save_triplets
 from benchmark.validation.triplet_paths import triplet_path
-from benchmark.vcs.git import GitCache
+from benchmark.vcs.git import GitCache, run_git
 from benchmark.vcs.workspace import capture_changes, prepare_workspace
 from test_basket import payload
 
@@ -262,6 +262,28 @@ def test_unsafe_before_symlink_is_rejected(history: tuple[GitCache, str, str], t
     with pytest.raises(BenchmarkError) as caught:
         prepare_workspace(cache, revision, tmp_path / 'attempt/source', '.')
     assert caught.value.code == 'unsafe_snapshot'
+
+
+def test_case_colliding_snapshot_does_not_overwrite_frozen_files(
+    history: tuple[GitCache, str, str], tmp_path: Path,
+) -> None:
+    check = tmp_path / 'CaseProbe'
+    check.touch()
+    if not (tmp_path / 'caseprobe').exists():
+        pytest.skip('case-sensitive filesystem')
+    cache, before, _after = history
+    entry = cache.tree(before)['src/value.py']
+    tree = run_git(
+        ['--git-dir', str(cache.path), 'mktree'],
+        input_bytes=f'100644 blob {entry.oid}\tSource.py\n100644 blob {entry.oid}\tsource.py\n'.encode(),
+    ).decode().strip()
+    revision = run_git(
+        ['--git-dir', str(cache.path), 'commit-tree', tree, '-m', 'case collision'],
+    ).decode().strip()
+    with pytest.raises(BenchmarkError) as caught:
+        prepare_workspace(cache, revision, tmp_path / 'snapshot', '.')
+    assert caught.value.code == 'unsafe_snapshot'
+    assert not (tmp_path / 'snapshot/.git').exists()
 
 
 def test_cache_ensure_reuses_exact_objects_without_network(history: tuple[GitCache, str, str]) -> None:

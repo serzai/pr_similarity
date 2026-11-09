@@ -55,6 +55,36 @@ the original Python platform/content and sandbox identity, including the Git
 snapshot digest. Completed saved facts can be reused after moving a run without
 replaying native execution. Keep original frozen basket bytes.
 
+## Run the bundled baskets on Apple Silicon
+
+Use the same [native baseline](../examples/macos.yaml) for every pandas and
+OpenSearch basket. Choose a repository and a size from
+[the basket catalog](../examples/baskets/README.md).
+
+```sh
+make run CONFIG=examples/macos.yaml \
+  DATASET=examples/baskets/opensearch/opensearch-2026H1-100.json \
+  OUTPUT=./output WORKERS=2
+```
+
+The runner verifies both exact Git endpoints and exports only the before tree.
+Git keeps negotiation refs in its host cache so subsequent tasks can reuse
+objects even with shallow fetches. The runner checks that the private Git root
+recreates the exact original tree. For example, paths that collide on a
+case-insensitive volume produce an explicit preparation error.
+
+For large baskets, allow space for the repository cache and one independent
+workspace per worker. A cold run needs host access to the repository URL and
+the model endpoint. Check host Git connectivity first if source fetches fail.
+An operator-configured HTTPS proxy can be supplied in the host environment.
+
+The baseline runs the agent and compares source edits. Use
+[the pandas tested profile](functional-validation.md) for required pytest.
+OpenSearch project builds also require a compatible ARM64 JDK and Gradle.
+The default Seatbelt policy denies the listener sockets that Gradle uses for
+worker and cache IPC. Native baseline results do not include OpenSearch
+project test results.
+
 ## Runtime and isolation
 
 Each attempt sees its before-only source, private HOME/temp, readonly launch

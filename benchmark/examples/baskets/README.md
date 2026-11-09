@@ -19,6 +19,9 @@ Run from `benchmark/` after [setup and model login](../../README.md#quick-start)
 make run CONFIG=examples/full.yaml DATASET=examples/baskets/pandas/pandas-2026H1-1.json OUTPUT=./output
 ```
 
+On Apple Silicon, use `CONFIG=examples/macos.yaml` with any listed
+`DATASET`. See [native macOS setup](../../docs/macos.md#run-the-bundled-baskets-on-apple-silicon).
+
 Each basket freezes task statements, change metadata and exact Git revisions.
 The basket's generator model does not select the benchmarked agent; choose any
 agent configuration. No reference patches are embedded; the benchmark retrieves

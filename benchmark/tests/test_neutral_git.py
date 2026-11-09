@@ -1,5 +1,6 @@
 """Frozen source inputs drive the independent native Git adapter without hosting APIs."""
 
+import random
 import re
 import subprocess
 import time
@@ -8,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from typing import BinaryIO
 
 import pytest
 from benchmark.errors import BenchmarkError
@@ -141,6 +143,7 @@ def route_objects(
         stop: Event | None = None,
         accepted: tuple[int, ...] = (0,),
         input_bytes: bytes | None = None,
+        output_file: BinaryIO | None = None,
         host_fetch: bool = False,
         monitor: Callable[[], None] | None = None,
     ) -> bytes:
@@ -160,6 +163,7 @@ def route_objects(
             stop=stop,
             accepted=accepted,
             input_bytes=input_bytes,
+            output_file=output_file,
             host_fetch=host_fetch,
             monitor=monitor,
         )
@@ -218,6 +222,24 @@ def test_real_object_growth_has_a_finite_budget(tmp_path: Path, monkeypatch: pyt
     with pytest.raises(BenchmarkError) as caught:
         cache.ensure([row.revisions.before], fetch_refs=row.source.fetch_refs)
     assert caught.value.code == 'git_fetch_budget_exceeded'
+
+
+def test_later_shallow_fetch_reuses_large_unchanged_objects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A new task shares cached source blobs instead of fetching the entire tree again."""
+    source, row = frozen_source(tmp_path, 'github')
+    (source / 'large.bin').write_bytes(random.Random(42).randbytes(2 * 1024 * 1024))
+    git(source, 'add', 'large.bin')
+    git(source, 'commit', '-qm', 'large before')
+    before = git(source, 'rev-parse', 'HEAD')
+    (source / 'src/value.py').write_text('value = 4\n')
+    git(source, 'commit', '-qam', 'small follow-up')
+    after = git(source, 'rev-parse', 'HEAD')
+    route_objects(monkeypatch, source, row.source.fetch_url, require_hints=False)
+    GitCache(tmp_path / 'cache', row.source.fetch_url).ensure([before])
+    later = GitCache(tmp_path / 'cache', row.source.fetch_url, max_transfer_bytes=1024 * 1024)
+    later.ensure([after])
+    assert later.has_commit(after)
+    assert later.tree(before)['large.bin'] == later.tree(after)['large.bin']
 
 
 def test_case_sensitive_fetch_paths_have_separate_caches(tmp_path: Path) -> None:

@@ -7,10 +7,13 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from itertools import batched
 from pathlib import Path
+from tempfile import TemporaryFile
+from typing import BinaryIO
 
 from benchmark.errors import BenchmarkError
 from benchmark.models.basket import BasketRecord
@@ -117,6 +120,7 @@ def run_git(
     stop: threading.Event | None = None,
     accepted: tuple[int, ...] = (0,),
     input_bytes: bytes | None = None,
+    output_file: BinaryIO | None = None,
     host_fetch: bool = False,
     monitor: Callable[[], None] | None = None,
 ) -> bytes:
@@ -151,7 +155,7 @@ def run_git(
             cwd=cwd,
             env=environment,
             stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.PIPE if output_file is None else output_file,
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
@@ -179,7 +183,7 @@ def run_git(
                 continue
         if process.returncode not in accepted:
             _raise_git_error(stderr, host_fetch)
-        return stdout
+        return stdout or b''
     except BaseException:
         # The leader can exit while a credential helper still owns its pipe.
         # Reap the whole group even when poll() already reports the leader's exit.
@@ -355,6 +359,8 @@ class GitCache:
             references = [fetch_ref(reference) for reference in (fetch_refs or [])]
             for sha in revisions:
                 self._deliver(sha, references)
+                # FETCH_HEAD alone does not advertise cached commits during the next fetch.
+                self.run('update-ref', 'refs/prsim/' + sha, sha)
             self.run('fsck', '--full', '--strict', '--no-reflogs')
 
     def tree(self, revision: str) -> dict[str, TreeEntry]:
@@ -376,20 +382,60 @@ class GitCache:
             result[path] = TreeEntry(mode, oid)
         return result
 
+    def tree_id(self, revision: str) -> str:
+        """Identify the exact root tree of a frozen commit."""
+        if not _SHA.fullmatch(revision):
+            raise BenchmarkError('invalid_revision', 'Expected an exact Git commit SHA.')
+        return self.run('rev-parse', revision + '^{tree}').decode('ascii').strip()
+
     def blob(self, entry: TreeEntry) -> bytes:
         """Read and validate one frozen Git blob."""
         content = self.run('cat-file', 'blob', entry.oid)
-        actual = hashlib.sha1(f'blob {len(content)}\0'.encode() + content).hexdigest()
+        self._verify_blob(entry, content)
+        return content
+
+    @staticmethod
+    def _verify_blob(entry: TreeEntry, content: bytes) -> None:
+        digest = hashlib.sha1(f'blob {len(content)}\0'.encode())
+        digest.update(content)
+        actual = digest.hexdigest()
         if actual != entry.oid:
             raise BenchmarkError('git_corrupt', 'A cached Git blob is damaged; repair the object cache.', exit_code=1)
-        return content
+
+    def blobs(self, entries: list[TreeEntry]) -> Generator[bytes, None, None]:
+        """Export batches through a temporary file to keep only one blob in memory."""
+        for group in batched(entries, 128):
+            with TemporaryFile() as output:
+                run_git(
+                    ['--git-dir', str(self.path), 'cat-file', '--batch'],
+                    timeout=self.timeout, stop=self.stop,
+                    input_bytes=''.join(entry.oid + '\n' for entry in group).encode('ascii'),
+                    output_file=output,
+                )
+                end = output.tell()
+                output.seek(0)
+                for entry in group:
+                    header = output.readline(128).rstrip(b'\n').split(b' ')
+                    if (len(header) != 3 or header[:2] != [entry.oid.encode('ascii'), b'blob']
+                            or not header[2].isdigit()):
+                        raise BenchmarkError('git_corrupt', 'Cached Git blob metadata is invalid.', exit_code=1)
+                    size = int(header[2])
+                    if size >= end - output.tell():
+                        raise BenchmarkError('git_corrupt', 'Cached Git blob output is truncated.', exit_code=1)
+                    content = output.read(size)
+                    if output.read(1) != b'\n':
+                        raise BenchmarkError('git_corrupt', 'Cached Git blob output is malformed.', exit_code=1)
+                    self._verify_blob(entry, content)
+                    yield content
+                if output.tell() != end:
+                    raise BenchmarkError('git_corrupt', 'Cached Git blob output has trailing bytes.', exit_code=1)
 
     def verify_reference(self, row: BasketRecord) -> None:
         """Prove exported paths/blobs/modes against the frozen Git endpoints."""
         revisions = {'before': row.revisions.before, 'after': row.revisions.after}
         expected_trees = {'before': row.revisions.before_tree, 'after': row.revisions.after_tree}
         for role, revision in revisions.items():
-            actual = self.run('rev-parse', revision + '^{tree}').decode('ascii').strip()
+            actual = self.tree_id(revision)
             if actual != expected_trees[role]:
                 raise BenchmarkError(
                     'reference_mismatch', 'Frozen Git tree identity differs from the basket.', exit_code=1
