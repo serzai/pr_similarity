@@ -222,8 +222,10 @@ pytest-xdist==3.8.0 \
     --hash=sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88
 pytest==8.4.2 \
     --hash=sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79
-python-dateutil==4.0.0 \
-    --hash=sha256:a5e246f79eb80475e691bf93862cead98decd8a498cf53ba0516fcdc0f50dc1c
+python-dateutil==2.9.0.post0 \
+    --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
+six==1.17.0 \
+    --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
 sortedcontainers==2.4.0 \
     --hash=sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0
 tzdata==2026.6 \
@@ -234,15 +236,29 @@ wheel==0.48.0 \
     --hash=sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab
 REQUIREMENTS
 python -m pip install --only-binary=:all: --require-hashes -r "$HOME/pandas-build-requirements.lock"
+# The isolated Git root has no release tags. Supply Meson's distribution metadata
+# for this pandas 3.x profile so optional packages can check its API version.
+python - "$(git rev-parse HEAD)" <<'VERSION'
+import sys
+from pathlib import Path
+
+with Path("_version_meson.py").open("x", encoding="utf-8") as version:
+    version.write(f'__version__ = "3.0.0+prsim.snapshot"\n__git_version__ = {sys.argv[1]!r}\n')
+VERSION
 python -m pip install --no-build-isolation --no-deps -e . \
   --config-settings="build-dir=$HOME/pandas-build" \
   --config-settings="compile-args=-j2"
 python - <<'CHECK'
 from pathlib import Path
 import numpy, pandas, pandas._libs, pytest
+from dateutil.tz import gettz
 assert Path(pandas.__file__).resolve().is_relative_to(Path.cwd() / "pandas"), "Wrong pandas source imported"
+assert pandas.__version__ == "3.0.0+prsim.snapshot", "Wrong pandas snapshot version"
 # Import alone did not detect an ABI mismatch in the historical source.
 assert len(pandas.date_range("2020-01-01", periods=2)) == 2
+zone = gettz("America/Los_Angeles")
+assert zone is not None, "Missing dateutil timezone"
+assert pandas.Timestamp("2020-01-01", tz=zone).utcoffset().total_seconds() == -8 * 3600
 print("Prepared source pandas", pandas.__version__, "with NumPy", numpy.__version__)
 CHECK
 python -m pytest pandas/tests/api/test_api.py --collect-only -q

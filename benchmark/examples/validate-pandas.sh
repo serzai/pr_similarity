@@ -26,6 +26,15 @@ if not files:
         raise SystemExit('Functional source changed without a changed regression test. Add or update coverage.')
     # Documentation-only changes still receive a real project API smoke.
     files = ['pandas/tests/api/test_api.py']
+if 'pandas/tests/api/test_api.py' in files:
+    # On older snapshots the public API assertions expect pandas.api.internals
+    # to have been imported during collection by the companion API tests.
+    companion = root / 'pandas/tests/internals/test_api.py'
+    if (companion.is_file() and not companion.is_symlink()
+            and companion.resolve().is_relative_to(root)):
+        name = companion.relative_to(root).as_posix()
+        if name not in files:
+            files.append(name)
 print('Required test files:', json.dumps(files), flush=True)
 raise SystemExit(subprocess.call([
     sys.executable, '-X', 'faulthandler', '-m', 'pytest', '-q',

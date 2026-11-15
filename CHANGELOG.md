@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Give native pandas snapshots explicit local build metadata for PyArrow and pin a
+  compatible dateutil version for historical timezone tests. Collect companion
+  API tests together when older pandas snapshots require it.
+
 - Reuse shallow Git objects across large baskets and batch verified source exports.
   Check the recreated tree against the frozen revision to detect filesystem path collisions.
 - Reduce Git subprocess overhead when exporting large snapshots such as OpenSearch.

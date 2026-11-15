@@ -25,6 +25,17 @@ venv, then builds the exported before source with Meson in editable mode. It
 checks the import location, a datetime operation and pytest collection before
 starting the agent. NumPy is pinned to 2.2.6: the tested historical source crashes
 in datetime conversion with 2.5.4. No prebuilt pandas wheel replaces the source.
+For these pandas 3.x snapshots the recipe supplies Meson's generated version
+metadata with the compatibility label `3.0.0+prsim.snapshot`. This is a local
+build label. It lets packages such as PyArrow recognize the 3.x API without
+requiring release tags in the private checkout. The generated file is excluded
+from the scored agent diff.
+`python-dateutil` is pinned to 2.9.0.post0. On the frozen before source for
+pandas PR #64504, 4.0.0 produced timezone errors in `test_datetimes.py`.
+Setup checks that a dateutil timezone gives the expected UTC offset.
+When the selected public API test has a companion internal API test in the
+checkout, validation collects both files together. Older public API checks
+expect `pandas.api.internals` to have been imported during that collection.
 Dependencies and test selection can need changes for another project or revision;
 edit the recipe and start a new run.
 

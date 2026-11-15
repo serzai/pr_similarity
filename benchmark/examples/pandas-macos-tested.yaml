@@ -26,6 +26,8 @@ agent:
   validation:
     script: ./validate-pandas.sh
     timeout_seconds: 900
+  diff_excludes:
+    - <repo_root>/_version_meson.py
   timeout_seconds: 1800
   retries:
     max_retries: 1
