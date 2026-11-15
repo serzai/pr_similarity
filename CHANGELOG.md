@@ -4,6 +4,7 @@
 
 - Reuse shallow Git objects across large baskets and batch verified source exports.
   Check the recreated tree against the frozen revision to detect filesystem path collisions.
+- Reduce Git subprocess overhead when exporting large snapshots such as OpenSearch.
 
 - Add opt-in required project tests with independently checked JUnit receipts,
   sealed per-task status, console/viewer/HTML display and failed-run propagation.

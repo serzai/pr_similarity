@@ -429,7 +429,8 @@ class GitCache:
 
     def blobs(self, entries: list[TreeEntry]) -> Generator[bytes, None, None]:
         """Export batches through a temporary file to keep only one blob in memory."""
-        for group in batched(entries, 128):
+        # Large trees pay for a Git process per batch. Only one blob is read into memory.
+        for group in batched(entries, 1024):
             with TemporaryFile() as output:
                 run_git(
                     ['--git-dir', str(self.path), 'cat-file', '--batch'],
