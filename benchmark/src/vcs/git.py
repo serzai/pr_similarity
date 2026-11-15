@@ -136,6 +136,7 @@ def run_git(
     stop: threading.Event | None = None,
     accepted: tuple[int, ...] = (0,),
     input_bytes: bytes | None = None,
+    input_file: BinaryIO | None = None,
     output_file: BinaryIO | None = None,
     host_fetch: bool = False,
     monitor: Callable[[], None] | None = None,
@@ -149,6 +150,7 @@ def run_git(
         stop: Optional cancellation signal checked before and during execution.
         accepted: Exit codes whose stdout is returned as a successful result.
         input_bytes: Optional stdin bytes; None supplies an empty input stream.
+        input_file: Optional file supplying stdin instead of input_bytes.
         host_fetch: Enable host credential-helper discovery for remote Git access.
         monitor: Optional observer called while waiting and after completion;
             its failures propagate after process-group cleanup.
@@ -190,7 +192,9 @@ def run_git(
             ],
             cwd=cwd,
             env=environment,
-            stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+            stdin=input_file if input_file is not None else (
+                subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL
+            ),
             stdout=subprocess.PIPE if output_file is None else output_file,
             stderr=subprocess.PIPE,
             start_new_session=True,
@@ -431,11 +435,13 @@ class GitCache:
         """Export batches through a temporary file to keep only one blob in memory."""
         # Large trees pay for a Git process per batch. Only one blob is read into memory.
         for group in batched(entries, 1024):
-            with TemporaryFile() as output:
+            with TemporaryFile() as requests, TemporaryFile() as output:
+                requests.write(''.join(entry.oid + '\n' for entry in group).encode('ascii'))
+                requests.seek(0)
                 run_git(
                     ['--git-dir', str(self.path), 'cat-file', '--batch'],
                     timeout=self.timeout, stop=self.stop,
-                    input_bytes=''.join(entry.oid + '\n' for entry in group).encode('ascii'),
+                    input_file=requests,
                     output_file=output,
                 )
                 end = output.tell()
