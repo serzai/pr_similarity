@@ -6,21 +6,149 @@ Run OpenCode on frozen GitHub/GitLab coding tasks and compare its changes with
 human solutions. Each run saves quality scores, token usage, diffs and logs;
 you can view the results locally or publish them to a compatible viewer.
 
+## Quick start
+
+On macOS use [native setup](docs/macos.md) and `examples/macos.yaml`.
+For pandas with mandatory pytest, see the [tested profile](docs/functional-validation.md).
+
+You need Linux x64 with glibc, Python 3.12, Make, Git, Bash and working
+bubblewrap user namespaces. See [prerequisites](#prerequisites) for host setup.
+Run from `benchmark/`:
+
+```bash
+make setup PYTHON=python3.12
+make env
+```
+
+`make setup` prints installation progress and the environment and Python paths.
+Package installation is quiet; warnings and errors remain visible.
+Keep `build/`: the editable installation uses files from this directory.
+
+> [!WARNING]
+> API-key runs may incur provider charges. OAuth runs consume subscription quota.
+> Keep credentials out of YAML and version control. Model access, source Git
+> access and viewer login use separate credentials.
+
+### Choose model access
+
+For a **ChatGPT subscription**, log in with the default configuration:
+
+```bash
+make auth CONFIG=examples/full.yaml AUTH_FLOW=headless
+```
+
+Complete the printed login flow in your browser. Then run one bundled task:
+
+```bash
+make run CONFIG=examples/full.yaml DATASET=examples/baskets/pandas/pandas-2026H1-1.json OUTPUT=./output
+```
+
+For an **API key**, put `OPENAI_API_KEY` in `.env` and choose an accessible model
+in [examples/openai-api-key.yaml](examples/openai-api-key.yaml):
+
+```bash
+make run CONFIG=examples/openai-api-key.yaml DATASET=examples/baskets/pandas/pandas-2026H1-1.json OUTPUT=./output
+```
+
+### Select tasks and retain the run path
+
+`DATASET` selects the tasks. Replace the example path with your frozen basket,
+or choose another size from the [basket catalog](examples/baskets/README.md).
+The same agent configuration works with different baskets.
+
+> [!NOTE]
+> Save the run directory printed by the command. `OUTPUT` is its parent directory;
+> `RUN` and `RESUME` refer to one complete run. Replace `RUN_ID` in examples below
+> with the printed directory name.
+
+Ctrl+C saves progress and prints a resume command. Keep the original basket and
+agent inputs when resuming.
+
+## Results
+
+Open `report.json` for the saved results, or create a browser report:
+
+```bash
+make visualize RUN=./output/RUN_ID
+```
+
+Open the generated `report.html`.
+The header shows the generating benchmark version and `Local offline report`.
+File dialogs open unified diffs; **Diff / Full file** switches both Human and Agent
+panels to full source with highlighted changes. Both views work offline.
+Add `OPEN_BROWSER=1` to open it in a browser on a desktop machine.
+See [results and logs](docs/results.md), [resume and retry](docs/reference.md#resume-retries-progress-and-logging),
+[pricing](docs/pricing.md) and [publication](docs/publication.md).
+Scores measure similarity to human edits, not the project's test pass rate.
+
+## Configuration
+
+[examples/full.yaml](examples/full.yaml) is the complete harness example:
+**GPT-6.1 Sol, medium effort, ChatGPT OAuth, `baseline` tag**. It lists every
+harness field, including disabled optional features and API-key alternatives.
+Use it as the default baseline; authenticate once with `make auth`.
+Native OpenCode integrations have their own fields; see the
+[configuration guide](docs/configuration.md) and [MCP/RAG guide](docs/integrations.md).
+
+## Example configurations
+
+| Config | Access | What to configure |
+|---|---|---|
+| [openai-api-key.yaml](examples/openai-api-key.yaml) | OpenAI API, native SDK | `OPENAI_API_KEY` and an available model |
+| [chatgpt-oauth.yaml](examples/chatgpt-oauth.yaml) | ChatGPT subscription OAuth | Short baseline recipe; login with `make auth CONFIG=examples/chatgpt-oauth.yaml` |
+| [openai-endpoint.yaml](examples/openai-endpoint.yaml) | Custom OpenAI endpoint, native SDK | Replace the example baseURL; set `OPENAI_API_KEY` and the model |
+| [openai-tdd.yaml](examples/openai-tdd.yaml) | OpenAI API with the Superpowers TDD skill | `OPENAI_API_KEY` and the model; skill and agent instructions are included locally |
+| [custom-tools.yaml](examples/custom-tools.yaml) | ChatGPT OAuth with a setup-installed documentation search CLI | Login with this CONFIG; setup script and rules are included locally |
+
+Examples use one worker and a 30-minute agent timeout. They enable automatic
+retry only for infrastructure failures within a one-retry budget; agent outcome
+retries are opt-in. YAML paths resolve relative to the config file, `~` to your
+home, and Make paths relative to this directory. `.env` is loaded from this
+directory regardless of CONFIG location.
+
+The TDD example customizes the agent through native `skills.paths` and
+`instructions`. Its pinned [Superpowers skill](https://github.com/obra/superpowers/tree/8ca22dba9a94f28898bbce59f2537ff4d87c747d/skills/test-driven-development)
+follows test-first development for behavior changes. Use it with the same basket:
+
+```bash
+make run CONFIG=examples/openai-tdd.yaml DATASET=/path/to/basket.json
+```
+
+## Further reading
+
 Start with [setup and login](#quick-start), then use the guide for your next task:
 
 - [Configure setup, skills, rules and exclusions](docs/configuration.md#configure-your-agent)
-- [Build pandas and require project tests](docs/functional-validation.md)
 - [Connect MCP or a RAG CLI in bubblewrap](docs/integrations.md#connect-mcp-and-rag)
 - [Find a task's logs, diff and scores](docs/results.md#find-your-results)
 - [Estimate cost with a pricing policy](docs/pricing.md#estimate-cost-with-reprice)
 - [Check and remove reusable credentials](docs/credentials.md#credentials-after-a-run)
 - [Publish and diagnose upload failures](docs/publication.md#publish-to-a-leaderboard)
 
+## Development
+
+`make help` lists commands, parameters and examples without setup or credentials.
+See the [runtime and format reference](docs/reference.md) and the
+[Python environment contract](docs/python.md). Tests and smoke require GCC/G++
+for native compilation checks inside the sandbox.
+
+```bash
+make test
+make smoke
+```
+
+These checks are offline; smoke also builds and installs a wheel outside the
+checkout. Similarity and resource identity intentionally ignore executable
+bits; chmod-only tasks are outside the metric scope.
+## Advanced topics
+
+<details>
+<summary>Prerequisites and setup behavior</summary>
+
 ## Prerequisites
 
 - **Linux x64 with glibc**, **Python 3.12** with venv/pip support, **GNU Make**,
-  **Git** and **Bash**. The experimental macOS alternative has its own
-  [prerequisites](docs/macos.md).
+  **Git** and **Bash**. See [native macOS prerequisites](docs/macos.md) for Seatbelt.
 - **Bubblewrap** (`bwrap`) with working unprivileged user namespaces. The runner
   checks the sandbox before starting agents. Containers and restricted hosts
   must allow user namespaces; installing the binary alone is insufficient.
@@ -41,44 +169,15 @@ Start with [setup and login](#quick-start), then use the guide for your next tas
 OpenCode does not need a separate installation: the runner downloads and caches
 `agent.runtime` from your config, then records it with the run.
 
-Experimental native macOS execution is available through
-[examples/macos.yaml](examples/macos.yaml). It uses Seatbelt, a private Python 3.12
-and a verified Apple Git snapshot. See [native macOS setup and limitations](docs/macos.md)
-for tested prerequisites and the [implementation plan](docs/native-macos-plan.md)
-for remaining validation. Linux remains the production baseline.
-
-## Quick start
-
-Run from this directory:
-
-```bash
-make help
-make setup PYTHON=python3.12
-make env
-```
-
 If `.venv` already exists, `make setup` asks `Reinstall dependencies? [Y/n]`.
 Enter or Y repeats setup in that environment; n leaves it unchanged. A closed
 stdin aborts setup. The environment is never deleted automatically. Each
 confirmed setup upgrades its pip before installing the project dependencies.
 
-### Choose model access
+</details>
 
-For an **API key**, add `OPENAI_API_KEY` to the generated `.env` or your
-environment. Choose an accessible model in
-[examples/openai-api-key.yaml](examples/openai-api-key.yaml), then run:
-
-```bash
-make run CONFIG=examples/openai-api-key.yaml DATASET=/path/to/basket.json OUTPUT=./output
-```
-
-For a **ChatGPT subscription**, choose a supported model in
-[examples/full.yaml](examples/full.yaml) and log in once:
-
-```bash
-make auth CONFIG=examples/full.yaml AUTH_FLOW=headless
-make run CONFIG=examples/full.yaml DATASET=/path/to/basket.json OUTPUT=./output
-```
+<details>
+<summary>Authentication and quota recovery</summary>
 
 Follow OpenCode's printed URL/code instructions and finish login in your browser.
 `headless` suits a remote terminal; `AUTH_FLOW=browser` uses the native
@@ -98,22 +197,10 @@ saves active attempt evidence and prints a manual resume command. Wait until
 quota is available before resuming; a new login is not required by this error.
 See [quota-stop and task states](docs/reference.md#resume-retries-progress-and-logging).
 
-### Select tasks and retain the run path
+</details>
 
-Use the included [2026H1 pandas and OpenSearch baskets](examples/baskets/README.md)
-to run without collecting or generating new tasks:
-
-```bash
-make run CONFIG=examples/full.yaml DATASET=examples/baskets/pandas/pandas-2026H1-25.json OUTPUT=./output
-```
-
-Or replace `/path/to/basket.json` with a completed collector export. One config
-works with several baskets: tasks are selected by `DATASET`, not YAML. With the
-collector quick-start basket:
-
-```bash
-make run CONFIG=examples/full.yaml DATASET=../basket_collector/output/examples/github-llm-diff/basket.json OUTPUT=./output WORKERS=1
-```
+<details>
+<summary>Workers, Git-cache waits and saved evidence</summary>
 
 Set `workers` in YAML for normal concurrency, or pass `WORKERS=5` to override it.
 Workers have separate task snapshots, setup processes and OpenCode HOME, but
@@ -136,74 +223,21 @@ including its timestamp, agent label and suffix. Replace it with your actual pat
 `OUTPUT=./output` is a parent directory, while `RUN=./output/RUN_ID` selects one
 run. With `OUTPUT=./output/my-basket`, use `RUN=./output/my-basket/RUN_ID`.
 
-## Configuration
-
-[examples/full.yaml](examples/full.yaml) is the complete harness example:
-**GPT-6.1 Sol, medium effort, ChatGPT OAuth, `baseline` tag**. It lists every
-harness field, including disabled optional features and API-key alternatives.
-Use it as the default baseline; authenticate once with `make auth`.
-Native OpenCode integrations have their own fields; see the
-[configuration guide](docs/configuration.md) and [MCP/RAG guide](docs/integrations.md).
-
-## Example configurations
-
-| Config | Access | What to configure |
-|---|---|---|
-| [macos.yaml](examples/macos.yaml) | ChatGPT OAuth, native macOS | Experimental Seatbelt backend; see [native prerequisites](docs/macos.md) |
-| [openai-api-key.yaml](examples/openai-api-key.yaml) | OpenAI API, native SDK | `OPENAI_API_KEY` and an available model |
-| [chatgpt-oauth.yaml](examples/chatgpt-oauth.yaml) | ChatGPT subscription OAuth | Short baseline recipe; login with `make auth CONFIG=examples/chatgpt-oauth.yaml` |
-| [openai-endpoint.yaml](examples/openai-endpoint.yaml) | Custom OpenAI endpoint, native SDK | Replace the example baseURL; set `OPENAI_API_KEY` and the model |
-| [openai-tdd.yaml](examples/openai-tdd.yaml) | OpenAI API with the Superpowers TDD skill | `OPENAI_API_KEY` and the model; skill and agent instructions are included locally |
-| [custom-tools.yaml](examples/custom-tools.yaml) | ChatGPT OAuth with a setup-installed documentation search CLI | Login with this CONFIG; setup script and rules are included locally |
-
-Examples use one worker and a 30-minute agent timeout. They enable automatic
-retry only for infrastructure failures within a one-retry budget; agent outcome
-retries are opt-in. YAML paths resolve relative to the config file, `~` to your
-home, and Make paths relative to this directory. `.env` is loaded from this
-directory regardless of CONFIG location.
-
-The TDD example customizes the agent through native `skills.paths` and
-`instructions`. Its pinned [Superpowers skill](https://github.com/obra/superpowers/tree/8ca22dba9a94f28898bbce59f2537ff4d87c747d/skills/test-driven-development)
-follows test-first development for behavior changes. Use it with the same basket:
-
-```bash
-make run CONFIG=examples/openai-tdd.yaml DATASET=/path/to/basket.json
-```
-
-## Results
-
-Keep the printed run directory. Start with `report.json` and use
-`make visualize RUN=./output/RUN_ID` to create a local HTML report.
-Add `OPEN_BROWSER=1` to open it in a browser on a desktop machine.
-See [results and logs](docs/results.md), [resume and retry](docs/reference.md#resume-retries-progress-and-logging),
-[pricing](docs/pricing.md) and [publication](docs/publication.md).
-Scores measure similarity to human edits, not the project's test pass rate.
+</details>
 
 <details>
 <summary>Compatibility</summary>
 
 Keep each run's original basket and agent settings for resume. Runs from an
 incompatible installation cannot be resumed, repriced or rescored; retain their
-files and use the installation that created them. Pre-release runs without shared
-`agent_input` also require their original tools. Use the pinned OpenCode runtime
+files and use the installation that created them. Use the pinned OpenCode runtime
 from an example; changing it requires checking the telemetry adapter before use.
+Publication requires an updated viewer advertising `local-durable-v1` with local
+storage enabled. Recover a pending legacy upload using its producing installation;
+do not rewrite its request or archive. Historical receipts remain readable.
+State v2 runs remain supported. Recording an interruption upgrades mutable state
+to v3 while preserving immutable run/native evidence. Use the updated viewer for
+these archives; older tools cannot read the recovery contract.
 See the [saved-data note](../README.md#reading-data-from-earlier-releases).
 
 </details>
-
-## Development
-
-`make help` lists commands, parameters and examples without setup or credentials.
-See the [runtime and format reference](docs/reference.md) and the
-[Python environment contract](docs/python.md). Tests and smoke require GCC/G++
-for native compilation checks inside the sandbox.
-
-```bash
-make test
-make smoke
-```
-
-These checks are offline; smoke also builds and installs a wheel outside the
-checkout. Full conformance tests invoke the independent viewer environment; prepare
-it first with `make -C ../viewer setup PYTHON=python3.12`. Similarity and resource identity intentionally ignore executable
-bits; chmod-only tasks are outside the metric scope.

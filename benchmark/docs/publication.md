@@ -13,38 +13,82 @@ After the writer stops, validate the complete local archive:
 make publish RUN=./output/RUN_ID URL=https://viewer.example.org DRY_RUN=1
 ```
 
-This writes a local archive/operation log, with no HTTP or authentication. Missing
-evidence refuses publication: keep the entire run, not only `report.json`. When
-you intend to upload:
+> [!NOTE]
+> `DRY_RUN=1` writes and validates a local archive without HTTP or login.
+> Keep the complete run directory: `report.json` alone is not enough to publish.
+
+To upload:
 
 ```bash
 make publish RUN=./output/RUN_ID URL=https://viewer.example.org
 ```
-
-Publication shows its phase and elapsed time. After archive transfer, object-store
-persistence can take several minutes; wait for receipt and readback confirmation.
-The upload response wait is bounded to 960 seconds (connect: 20 seconds), allowing
-the viewer's default 900-second transfer budget. Login and readback keep their
-shorter timeout. `PROGRESS=auto` updates a TTY line, `plain` prints a heartbeat
-every 10 seconds, and `off` suppresses transient feedback. A timeout retains the
-exact pending payload/key; repeat the command to recover the same publication.
 
 In a terminal the client prompts for login and a hidden password, then requests
 a one-use grant. Automation can use `TOKEN_ENV=PRSIM_VIEWER_TOKEN` or
 `TOKEN_FILE=/private/publish.token` (mode 600, outside the run). Choose one source;
 never pass literal passwords/tokens in Make arguments or YAML.
 
-Confirm `status: completed` in `operations/publish/<uuid>/receipt.json`, including
-server owner and original archive/report hashes. The publisher also reads back
+Confirm `status: completed` in `operations/publish/<uuid>/receipt.json`. Its
+`server_receipt` must contain `protocol: local-durable-v1`,
+`durability: local_durable`, `phase: available`, server owner/actor and the original
+archive/report hashes. The publisher also reads back
 run/config/tasks over HTTPS and checks basket and configured Model/Effort origins.
 An overwrite preserves server display name/Setup tags and reports differences
 from local labels. For an ambiguous upload, repeat the same command to replay
 its frozen `payload.tar.gz`, request and idempotency key. `_meta/state.json`
 selects `pending_publish`; moving the complete run preserves relative replay refs. A 409 is a conflict; use
 `OVERWRITE=1` only when you intend to replace the same owner's publication.
-The server saves a backup. See [viewer usage](../../viewer/docs/leaderboard.md#use-the-leaderboard).
+Publication completes after the server validates and durably commits the local version.
+The server starts archival backup after responding. See [viewer usage](../../viewer/docs/leaderboard.md#use-the-leaderboard).
+
+## Recovery and troubleshooting
+
+<details>
+<summary>Progress, timeouts and replaying a pending upload</summary>
+
+The client requires `local-durable-v1` from
+`GET /api/v1/publication-capabilities`. A legacy server gives an explicit
+unsupported-protocol error. During PUT, a separate authenticated connection reads
+`/api/v1/publication-operations/{idempotency_key}` and displays the server's
+receiving, extracting, validating and committing messages. Wait for an `available`
+receipt with `durability: local_durable` and successful public readback.
+These checks determine success; upload completion alone does not.
+
+Before resending a pending upload, the client checks the operation status with
+its original run ID and hashes. A completed operation returns its receipt without
+resending archive bytes. An operation still processing retains its journal and
+asks for a later retry. Historical receipts remain readable; a pending legacy
+request must be recovered with its original client, preserving its frozen bytes.
+The upload response wait is bounded to 960 seconds (connect: 20 seconds), allowing
+the viewer's default 900-second transfer budget. Login and readback keep their
+shorter timeout. `PROGRESS=auto` updates a TTY line, `plain` prints a heartbeat
+every 10 seconds, and `off` suppresses transient feedback. A timeout retains the
+exact pending payload/key; repeat the command to recover the same publication.
+
+</details>
+
+### Publish after an interrupted attempt
+
+<details>
+<summary>Prepare a run with incomplete historical attempts</summary>
+
+Run `make run CONFIG=... DATASET=<original-basket> RESUME=<run-directory>` before
+publishing an older run with incomplete historical attempts. Resume records the
+missing native facts separately and keeps every original attempt. Completed tasks
+are reused. If unfinished tasks remain, normal resume may start new attempts.
+
+The archive and viewer accept explicitly interrupted history only when the later
+state-selected attempt satisfies the usual publication checks. They still reject
+missing committed files, digest mismatches and foreign references. All-attempt
+costs retain known subtotals and mark unknown usage as incomplete; selected task
+scores and final-attempt measurements keep their existing meaning.
+
+</details>
 
 ### Distinguish a wrong password, TLS failure and broken API
+
+<details>
+<summary>Diagnose authentication, TLS and storage failures</summary>
 
 “Publication failed” is a safe summary, not a diagnosis. Each command writes
 `_meta/invocations/<uuid>/benchmark.log` at DEBUG regardless of console `LOG_LEVEL`.
@@ -116,3 +160,5 @@ it does not install custom certificates into the agent's bubblewrap sandbox.
 The credentials/grant POST route is `/api/v1/auth/publish-token`; the upload route
 is PUT `/api/v1/runs/{run_id}`. An administrator can inspect those server-side
 failures without requesting the user's password.
+
+</details>

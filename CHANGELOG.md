@@ -18,6 +18,51 @@
   paths. Keep existing Linux probe bytes readable and reject platform/isolation
   mismatches when resuming native work.
 
+## 0.3.5.3
+
+- Arrange Settings as Server & storage, Activity, then Baskets.
+- Place Reload settings below storage usage and Save basket layout below baskets.
+
+## 0.3.5.2
+
+- Show storage usage categories as cards that stay visible while measurements update.
+
+## 0.3.5.1
+
+- Make Settings easier to scan with operation progress below basket controls and
+  server/storage usage cards refreshed by Reload settings.
+- Hide unavailable storage metrics when using mock storage.
+
+## 0.3.5
+
+- Save published runs locally before confirming success, then back them up to S3.
+- Keep cached results available during S3 outages and restore archived runs when opened.
+- Recover interrupted publications without uploading an already saved archive again.
+
+## 0.3.4.2
+
+- Color added and removed line counts in Human and Agent file headings,
+  in both Diff and Full file views of the viewer and local HTML reports.
+
+## 0.3.4.1
+
+- Make setup quieter, with progress messages and reusable environment paths.
+- Fix package-data warnings and consistently use the selected setup package index.
+
+## 0.3.4
+
+- Refresh the viewer and offline HTML with clearer task metrics, setup details,
+  and a **Diff / Full file** selector for human and agent changes.
+- Improve catalogue and administration screens, including drag-and-drop basket ordering.
+- Preserve interrupted attempt history through resume and publication; show unknown
+  historical usage as incomplete instead of zero.
+- Improve publication recovery and background catalogue refresh. Administrative
+  refresh now queues work; check `/admin/stats` for completion.
+- Add a read-only run-integrity audit skill for VCS, network and filesystem evidence.
+
+> [!IMPORTANT]
+> Update benchmark and viewer together before publishing recovered runs.
+> See [saved-data compatibility](README.md#reading-data-from-earlier-releases).
 
 ## 0.3.3
 
@@ -140,5 +185,6 @@ with glibc and working bubblewrap user namespaces. Viewer requires Python 3.12
 or newer; its deployment is separate. OpenCode examples pin 1.18.33.
 
 Similarity measures agreement with human edits; it is not a test pass rate.
-Executable-bit-only changes are outside the v1 metric scope. Older prerelease
-run layouts are unsupported; automatic migration is not provided.
+Executable-bit-only changes are outside the v1 metric scope. Run layouts without
+the required registry and shared agent input are unsupported; automatic migration
+is not provided.

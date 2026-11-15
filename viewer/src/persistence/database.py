@@ -6,11 +6,13 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from collections.abc import Callable
 from contextlib import closing
+from functools import wraps
 from pathlib import Path
-from typing import TypedDict
+from typing import Concatenate, TypedDict
 
 from viewer.errors import ViewerError
 from viewer.util import digest, json_bytes, parse_json, require_object, utc_now
@@ -44,11 +46,24 @@ class HeaderAdmin(TypedDict):
 type Actor = AccountActor | HeaderAdmin
 
 
+def serialized[**P, R](method: Callable[Concatenate['Database', P], R]) -> Callable[Concatenate['Database', P], R]:
+    """Keep each SQLite transaction within the service's short shared lock."""
+
+    @wraps(method)
+    def invoke(self: 'Database', *args: P.args, **kwargs: P.kwargs) -> R:
+        """Run the wrapped database method under its shared lock."""
+        with self.lock:
+            return method(self, *args, **kwargs)
+
+    return invoke
+
+
 class Database:
     """Own account state, grants and publication journals in SQLite."""
 
     def __init__(self, runtime: Path, *, clock: Callable[[], float] = time.time, ttl: int = 60) -> None:
-        """Initialize the resources and limits owned by this instance."""
+        """Open private SQLite storage and initialize or upgrade its account schema."""
+        self.lock = threading.RLock()
         runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(runtime, 0o700)
         self.path, self.clock, self.ttl = runtime / 'viewer.sqlite', clock, ttl
@@ -60,7 +75,7 @@ class Database:
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         version = self.connection.execute('PRAGMA user_version').fetchone()[0]
-        if version > 2:
+        if version > 3:
             self.connection.close()
             raise ViewerError('database_version', 'Database schema is newer than this viewer.', 503)
         if version == 1:
@@ -108,8 +123,10 @@ class Database:
                         'ECK(role IN (\'user\',\'admin\'))'
                     )
                 )
-            self.connection.execute('PRAGMA user_version=2')
+            if version < 2:
+                self.connection.execute('PRAGMA user_version=2')
 
+    @serialized
     def create_user(self, login: str, password: str, *, role: str = 'user') -> dict:
         """Create a validated account without overwriting an existing login."""
         if not isinstance(login, str) or not LOGIN.fullmatch(login):
@@ -126,6 +143,7 @@ class Database:
             raise ViewerError('user_exists', 'User already exists.', 409) from None
         return {'login': login, 'enabled': True}
 
+    @serialized
     def list_users(self, details: bool = False) -> list[dict]:
         """Return public account attributes with optional role details."""
         return [
@@ -133,11 +151,13 @@ class Database:
             for r in self.connection.execute('SELECT login,enabled,role FROM users ORDER BY login')
         ]
 
+    @serialized
     def actor(self, login: str) -> AccountActor | None:
         """Return the enabled account identity or no actor."""
         row = self.connection.execute('SELECT login,role,enabled FROM users WHERE login=?', (login,)).fetchone()
         return {'login': row['login'], 'role': row['role']} if row and row['enabled'] else None
 
+    @serialized
     def authenticate(self, login: object, password: object) -> AccountActor:
         """Verify user credentials while preserving the existing rejection policy."""
         if (
@@ -168,6 +188,7 @@ class Database:
         if row['role'] == 'admin' and row['enabled'] and loses_access and count <= 1:
             raise ViewerError('last_admin', 'The last active administrator must remain enabled.', 409)
 
+    @serialized
     def set_role(self, login: str, role: str) -> dict:
         """Change an account role while preserving administrator availability."""
         if role not in ('user', 'admin'):
@@ -189,6 +210,7 @@ class Database:
                 'protected_admin', 'Administrator accounts cannot be changed through user management.', 403
             )
 
+    @serialized
     def update_user(self, login: str, *, enabled: bool | None, users_only: bool = False) -> dict:
         """Update account access and revoke credentials when access is removed."""
         if type(enabled) is not bool:
@@ -205,6 +227,7 @@ class Database:
                 self._revoke(login)
         return {'login': login, 'enabled': enabled}
 
+    @serialized
     def set_password(self, login: str, password: str, *, users_only: bool = False) -> dict:
         """Replace the password verifier and revoke existing credentials."""
         hashed = password_hash(password)
@@ -217,6 +240,7 @@ class Database:
             self._revoke(login)
         return {'login': login}
 
+    @serialized
     def issue(
         self,
         login: str,
@@ -225,18 +249,24 @@ class Database:
         run_id: str | None = None,
         *,
         verify: Callable[[str, str], object] | None = None,
+        ttl_seconds: int | None = None,
     ) -> dict:
         """Create a short-lived grant for one authenticated operation."""
-        token, expires = secrets.token_urlsafe(32), self.clock() + self.ttl
+        ttl = self.ttl if ttl_seconds is None else ttl_seconds
+        if type(ttl) is not int or ttl < 1:
+            raise ViewerError('invalid_grant_ttl', 'Grant TTL must be a positive integer.')
+        token, expires = secrets.token_urlsafe(32), self.clock() + ttl
         with self.connection:
             self.connection.execute('BEGIN IMMEDIATE')
             (verify or self.authenticate)(login, password)
             self.connection.execute('DELETE FROM grants WHERE expires<? OR consumed=1', (self.clock(),))
             self.connection.execute(
-                'INSERT INTO grants VALUES (?,?,?,?,?,0)', (digest(token.encode()), login, operation, run_id, expires)
+                'INSERT INTO grants VALUES (?,?,?,?,?,0)',
+                (digest(token.encode()), login, operation, run_id, expires),
             )
         return {'token': token, 'expires_at': utc_now(expires)}
 
+    @serialized
     def authorize(self, token: str, operation: str, run_id: str | None = None) -> str:
         """Validate a grant and return its owner without consuming it."""
         if not isinstance(token, str) or len(token) > 1024:
@@ -256,16 +286,19 @@ class Database:
             raise ViewerError('invalid_grant', 'Missing or expired grant.', 401)
         return row['login']
 
+    @serialized
     def consume(self, token: str) -> None:
         """Mark a grant consumed inside the caller transaction."""
         with self.connection:
             self.connection.execute('UPDATE grants SET consumed=1 WHERE token_hash=?', (digest(token.encode()),))
 
+    @serialized
     def owner(self, run_id: str) -> dict[str, str] | None:
         """Read the immutable ownership binding for a run."""
         row = self.connection.execute('SELECT login,basket_hash FROM owners WHERE run_id=?', (run_id,)).fetchone()
         return dict(row) if row else None
 
+    @serialized
     def reserve_owner(self, run_id: str, login: str, basket_hash: str) -> None:
         """Reserve ownership without replacing an existing run binding."""
         previous = self.owner(run_id)
@@ -276,6 +309,7 @@ class Database:
         with self.connection:
             self.connection.execute('INSERT OR IGNORE INTO owners VALUES (?,?,?)', (run_id, login, basket_hash))
 
+    @serialized
     def receipt(self, login: str, key: str) -> dict | None:
         """Read the saved idempotency receipt for a publication."""
         row = self.connection.execute(
@@ -287,6 +321,7 @@ class Database:
             else None
         )
 
+    @serialized
     def operations(self) -> dict[str, dict]:
         """Return pending durable operations in operation ID order."""
         return {
@@ -294,6 +329,7 @@ class Database:
             for r in self.connection.execute('SELECT * FROM operations ORDER BY id')
         }
 
+    @serialized
     def begin_publication(self, op_id: str, value: dict, token: str | None = None) -> None:
         """Persist publication intent and consume its grant atomically."""
         previous = self.owner(value['marker']['run_id'])
@@ -310,6 +346,7 @@ class Database:
                 self.connection.execute('UPDATE grants SET consumed=1 WHERE token_hash=?', (digest(token.encode()),))
             self.connection.execute('INSERT INTO operations VALUES (?,?)', (op_id, json_bytes(value).decode()))
 
+    @serialized
     def save_operation(self, op_id: str, value: dict) -> None:
         """Persist the durable operation envelope."""
         with self.connection:
@@ -317,6 +354,7 @@ class Database:
                 'INSERT OR REPLACE INTO operations VALUES (?,?)', (op_id, json_bytes(value).decode())
             )
 
+    @serialized
     def progress(self, op_id: str, step: str) -> int:
         """Read the last completed position for one operation step."""
         row = self.connection.execute(
@@ -324,11 +362,13 @@ class Database:
         ).fetchone()
         return row['position'] if row else 0
 
+    @serialized
     def set_progress(self, op_id: str, step: str, position: int) -> None:
         """Persist a completed operation position for recovery."""
         with self.connection:
             self.connection.execute('INSERT OR REPLACE INTO operation_progress VALUES (?,?,?)', (op_id, step, position))
 
+    @serialized
     def finish_operation(
         self,
         op_id: str,
@@ -347,6 +387,7 @@ class Database:
             self.connection.execute('DELETE FROM operations WHERE id=?', (op_id,))
             self.connection.execute('DELETE FROM operation_progress WHERE id=?', (op_id,))
 
+    @serialized
     def backup(self, target: Path) -> None:
         """Copy the live SQLite database through its backup API."""
         if target.exists():
@@ -356,6 +397,7 @@ class Database:
         with closing(sqlite3.connect(target)) as output:
             self.connection.backup(output)
 
+    @serialized
     def close(self) -> None:
         """Close the owned database connection."""
         self.connection.close()

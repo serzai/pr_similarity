@@ -5,19 +5,30 @@
 If a viewer is already deployed, open its HTTPS address: **no local setup or
 login is needed to browse public runs**. Search/filter a basket's runs, open one
 run, then a task title to expand its condition, score, file list and Human/Agent
-diffs. The Original PR or Original MR link inside the card opens the source change.
+diffs. The Open Human PR or Open Human MR button inside the card opens the source change.
+File dialogs open in **Diff** mode with Human and Agent unified diffs.
+Use **Diff / Full file** beside the close button to switch both panels.
+**Full file** shows source context, line numbers, inline additions/deletions and
+a change map. The selected mode applies to subsequent files until page reload. Empty, absent and truncated files have
+explicit messages. Expanded tasks show raw line-change and changed-file counts
+for Human PR and Agent Solution; Partial counts omit files over display limits.
+These counts are separate from normalized scoring weights.
+
 The config button shows one safe native `opencode.json`, including the model,
 reasoning options, skills and instructions. Resource paths are relative to the
-agent directory in the downloaded archive. The run page shows runtime, timeout,
+agent directory in the downloaded archive. Copy and Download save the displayed
+input JSON. Setup also reports authentication mode, setup-script presence,
+environment-variable count and whether task instructions match the default.
+The run page shows runtime, timeout,
 retries and exclusions separately, plus configured/effective model facts and origins.
 Model shows `provider/model [effort]` from configured native facts. When effort
 is absent or unknown, Model shows only `provider/model`, without brackets.
 Setup contains user tags as-is.
-Partially known cost/usage shows the known subtotal with a visible `(partial)` label
-and a compact `(!)` explanation.
+Partially known cost/usage shows the known subtotal with a Partial status.
+Unavailable measurements have an explicit status. Click or focus the metric to
+inspect coverage and cost provenance.
 Completely unknown measurements remain a dash; measured zero remains zero.
-Hover, focus or tap a marker to see coverage and cost provenance. Score and time
-also mark incomplete coverage. Repriced cost is an API-equivalent estimate;
+Score and time also mark incomplete coverage. Repriced cost is an API-equivalent estimate;
 native zero with OAuth is not measured API cost, and API-key zero can indicate
 missing model pricing configuration. A timeout may still have a scored diff.
 Durations use seconds, minutes or hours; tooltips retain exact seconds.
@@ -45,12 +56,16 @@ incomplete tasks; `partial_tasks`, `unavailable_tasks`, `known_requests`,
 These display fields do not change saved benchmark report or archive formats.
 
 On a run page, its logged-in owner can use **Delete Run**; an administrator can
-delete any run. Confirm the displayed name before deletion. The publication moves
-to server trash through durable recovery; a newer overwritten publication requires
-a reload and new confirmation. Guests and other ordinary users cannot delete it.
-Deletion retains ownership and old receipts. Replaying an upload for a deleted
-publication returns 404 rather than confirming an absent run; the publisher closes
-that pending request, and a subsequent publication uses a fresh operation.
+delete any run. Confirm the displayed name before deletion. The expected publication
+hash prevents deleting a version that has changed since the page was loaded.
+Local storage records a deletion tombstone and removes the run from the catalogue;
+legacy storage retains its trash workflow. Guests and other ordinary users cannot
+delete the run. Existing archives and historical receipts keep their original identity.
+
+A run that has been idle may need to reload its archived data before the page or
+file opens. The original request waits for validation and restore. Catalogue
+listings remain available from the persisted database. A failed restore reports
+an error without exposing partial run contents.
 
 Different basket hashes remain separate populations. Coverage and omissions
 describe the collector's input population; failed
@@ -82,11 +97,15 @@ pinning is a viewer presentation choice, not a new benchmark evaluation.
 Changing a display name or Setup tag does not rewrite the source report/archive
 or configured Model/Effort. Local run labels remain frozen across resume; an
 overwrite preserves the server name/Setup edits and reports any differences.
-Uploading the same ID again is a conflict unless an explicit same-owner overwrite
-is requested; the server keeps the previous publication in trash.
+Uploading the same ID again is a conflict unless an explicit overwrite is
+requested.
+Local storage keeps distinct generations rather than changing archived bytes.
 
 Administrators use Settings to arrange, collapse or hide baskets from the home
-catalogue. **Hidden is not private:** direct run/task/config/diff links remain
+catalogue. Collapsed sections load their run rows when expanded. Drag a basket by its grip, or focus the grip and use ArrowUp, ArrowDown,
+Home or End. Save basket layout persists the order and flags; Reload settings
+recovers from a concurrent revision conflict. **Hidden is not private:** direct
+run/task/config/diff links remain
 public. Review prompts, source and logs before publishing confidential work.
 Original full archive downloads require owner/admin authorization.
 

@@ -56,6 +56,29 @@ class Config:
     region: str | None = None
     prefix: str = ''
     storage: str = 's3'
+    publication_storage: str = 'legacy'
+    admin_activity_limit: int = 100
+    storage_stats_max_objects: int = 200000
+    storage_stats_timeout_seconds: int = 60
+    cache_idle_ttl_seconds: int = 172800
+    cache_cleanup_interval_seconds: int = 300
+    catalogue_cache_bytes: int = 8 << 20
+    catalogue_cache_entries: int = 128
+    report_cache_bytes: int = 64 << 20
+    report_cache_entries: int = 16
+    cache_max_bytes: int = 20 << 30
+    pending_backup_max_bytes: int = 16 << 30
+    disk_reserve_bytes: int = 1 << 30
+    backup_workers: int = 2
+    restore_workers: int = 2
+    restore_queue_limit: int = 4
+    publish_workers: int = 4
+    backup_retry_seconds: int = 30
+    checkpoint_interval_seconds: int = 86400
+    checkpoint_retry_seconds: int = 300
+    cold_read_timeout_seconds: int = 900
+    version_retention_seconds: int = 90 * 86400
+    admin_overwrite_token_ttl_seconds: int = 60
     tls_cert: str | None = None
     tls_key: str | None = None
     grant_ttl_seconds: int = 60
@@ -64,6 +87,9 @@ class Config:
     login_attempts: int = 10
     login_window_seconds: int = 300
     password_checks: int = 1
+    recovery_retry_seconds: int = 5
+    recovery_attempts: int = 3
+    shutdown_seconds: int = 15
     limits: Limits = field(default_factory=Limits)
 
     def __post_init__(self) -> None:
@@ -81,6 +107,36 @@ class Config:
             safe_path(self.prefix.rstrip('/'))
         if self.storage not in ('s3', 'mock') or (self.storage == 's3' and not self.bucket):
             raise ViewerError('invalid_config', 'Select S3 with a bucket or explicit mock storage.')
+        if self.publication_storage not in ('legacy', 'local'):
+            raise ViewerError('invalid_config', 'Select legacy or local publication storage.')
+        for value in (
+            self.admin_activity_limit,
+            self.storage_stats_max_objects,
+            self.storage_stats_timeout_seconds,
+            self.cache_idle_ttl_seconds,
+            self.cache_cleanup_interval_seconds,
+            self.cache_max_bytes,
+            self.report_cache_bytes,
+            self.report_cache_entries,
+            self.catalogue_cache_bytes,
+            self.catalogue_cache_entries,
+            self.pending_backup_max_bytes,
+            self.backup_retry_seconds,
+            self.cold_read_timeout_seconds,
+            self.version_retention_seconds,
+            self.admin_overwrite_token_ttl_seconds,
+            self.checkpoint_interval_seconds,
+            self.checkpoint_retry_seconds,
+        ):
+            if type(value) is not int or value < 1:
+                raise ViewerError('invalid_config', 'Local storage limits must be positive integers.')
+        if type(self.restore_queue_limit) is not int or self.restore_queue_limit < 0:
+            raise ViewerError('invalid_config', 'Restore queue limit must be a non-negative integer.')
+        if type(self.disk_reserve_bytes) is not int or self.disk_reserve_bytes < 0:
+            raise ViewerError('invalid_config', 'Disk reserve must be a non-negative integer.')
+        for value in (self.backup_workers, self.restore_workers, self.publish_workers):
+            if type(value) is not int or not 1 <= value <= 32:
+                raise ViewerError('invalid_config', 'Worker limits must be integers from 1 to 32.')
         if self.endpoint:
             parts = urlsplit(self.endpoint)
             if (
@@ -122,7 +178,15 @@ class Config:
             object.__setattr__(self, 'public_origin', self.public_origin.rstrip('/'))
             if origin.scheme == 'http' and origin.hostname not in ('localhost', '127.0.0.1', '::1'):
                 raise ViewerError('invalid_config', 'Browser authentication requires HTTPS except on loopback.')
-        for value in (self.session_ttl_seconds, self.login_attempts, self.login_window_seconds, self.password_checks):
+        for value in (
+            self.session_ttl_seconds,
+            self.login_attempts,
+            self.login_window_seconds,
+            self.password_checks,
+            self.recovery_retry_seconds,
+            self.recovery_attempts,
+            self.shutdown_seconds,
+        ):
             if type(value) is not int or value < 1:
                 raise ViewerError('invalid_config', 'Authentication limits must be positive.')
 

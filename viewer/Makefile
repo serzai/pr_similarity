@@ -1,26 +1,34 @@
 PYTHON ?= python3
 VENV_PYTHON ?= .venv/bin/python
 CONFIG ?= config.local.json
+DEV ?= 0
 PACKAGE_INDEX_URL ?= https://pypi.org/simple
 URL ?=
 LOGIN ?=
 ROLE ?=
 RUN_ID ?=
 ORDER_JSON ?=
+CHECKPOINT_KEY ?=
+TARGET_RUNTIME ?=
+MIGRATION_MAX_OBJECTS ?= 100000
 
 export PRSIM_VIEWER_SETUP_PYTHON = $(value PYTHON)
 export PRSIM_VIEWER_PYTHON = $(value VENV_PYTHON)
 export PRSIM_VIEWER_CONFIG = $(value CONFIG)
+export PRSIM_VIEWER_DEV = $(value DEV)
 export PRSIM_VIEWER_INDEX = $(value PACKAGE_INDEX_URL)
 export PRSIM_VIEWER_URL = $(value URL)
 export PRSIM_VIEWER_LOGIN = $(value LOGIN)
 export PRSIM_VIEWER_ROLE = $(value ROLE)
 export PRSIM_VIEWER_RUN_ID = $(value RUN_ID)
 export PRSIM_VIEWER_ORDER_JSON = $(value ORDER_JSON)
+export PRSIM_VIEWER_CHECKPOINT_KEY = $(value CHECKPOINT_KEY)
+export PRSIM_VIEWER_TARGET_RUNTIME = $(value TARGET_RUNTIME)
+export PRSIM_VIEWER_MIGRATION_MAX_OBJECTS = $(value MIGRATION_MAX_OBJECTS)
 _COMMAND_LINE_VARIABLES := $(foreach name,$(.VARIABLES),$(if $(filter command line,$(origin $(name))),$(name)))
-unexport $(_COMMAND_LINE_VARIABLES) PYTHON VENV_PYTHON CONFIG PACKAGE_INDEX_URL URL LOGIN ROLE RUN_ID ORDER_JSON
+unexport $(_COMMAND_LINE_VARIABLES) PYTHON VENV_PYTHON CONFIG DEV PACKAGE_INDEX_URL URL LOGIN ROLE RUN_ID ORDER_JSON CHECKPOINT_KEY TARGET_RUNTIME MIGRATION_MAX_OBJECTS
 
-.PHONY: help setup browser-setup test serve start stop status logs admin-profile-create admin-role-set admin-profile-password-set admin-user-create admin-user-enable admin-user-disable admin-password-set admin-basket-order admin-run-delete admin-refresh
+.PHONY: help setup browser-setup test serve start stop status logs admin-profile-create admin-role-set admin-profile-password-set admin-user-create admin-user-enable admin-user-disable admin-password-set admin-basket-order admin-run-delete admin-refresh admin-local-import admin-checkpoint-restore
 
 setup:
 	@set -e; \
@@ -35,13 +43,20 @@ setup:
 	    esac; \
 	  done; \
 	fi; \
+	printf '%s\n' '[1/4] Preparing virtual environment'; \
 	if [ ! -x "$${PRSIM_VIEWER_PYTHON}" ]; then "$${PRSIM_VIEWER_SETUP_PYTHON}" -m venv .venv || "$${PRSIM_VIEWER_SETUP_PYTHON}" -m venv --without-pip .venv; fi; \
 	"$${PRSIM_VIEWER_PYTHON}" -c 'import sys; assert sys.version_info >= (3, 12), "Python >=3.12 required"'; \
-	if ! "$${PRSIM_VIEWER_PYTHON}" -m pip --version >/dev/null 2>&1; then PIP_INDEX_URL="$${PRSIM_VIEWER_INDEX}" "$${PRSIM_VIEWER_SETUP_PYTHON}" -m pip --python .venv install pip; fi; \
-	PIP_INDEX_URL="$${PRSIM_VIEWER_INDEX}" "$${PRSIM_VIEWER_PYTHON}" -m pip install --upgrade pip; \
-	PIP_INDEX_URL="$${PRSIM_VIEWER_INDEX}" "$${PRSIM_VIEWER_PYTHON}" -m pip install --require-hashes -r requirements-build.lock; \
-	PIP_INDEX_URL="$${PRSIM_VIEWER_INDEX}" "$${PRSIM_VIEWER_PYTHON}" -m pip install -r requirements.lock; \
-	"$${PRSIM_VIEWER_PYTHON}" -m pip install --no-build-isolation --no-deps -e .
+	printf '%s\n' '[2/4] Preparing pip'; \
+	if ! "$${PRSIM_VIEWER_PYTHON}" -m pip --version >/dev/null 2>&1; then PIP_INDEX_URL="$${PRSIM_VIEWER_INDEX}" "$${PRSIM_VIEWER_SETUP_PYTHON}" -m pip --python .venv install --quiet pip; fi; \
+	PIP_INDEX_URL="$${PRSIM_VIEWER_INDEX}" "$${PRSIM_VIEWER_PYTHON}" -m pip install --quiet --upgrade pip; \
+	printf '%s\n' '[3/4] Installing dependencies'; \
+	PIP_INDEX_URL="$${PRSIM_VIEWER_INDEX}" "$${PRSIM_VIEWER_PYTHON}" -m pip install --quiet --require-hashes -r requirements-build.lock; \
+	PIP_INDEX_URL="$${PRSIM_VIEWER_INDEX}" "$${PRSIM_VIEWER_PYTHON}" -m pip install --quiet -r requirements.lock; \
+	printf '%s\n' '[4/4] Installing project'; \
+	PYTHONWARNINGS="$${PYTHONWARNINGS:+$${PYTHONWARNINGS},}ignore:Editable installation.:UserWarning:setuptools.command.editable_wheel" PIP_INDEX_URL="$${PRSIM_VIEWER_INDEX}" "$${PRSIM_VIEWER_PYTHON}" -m pip install --quiet --no-build-isolation --no-deps -e .; \
+	setup_python="$${PRSIM_VIEWER_PYTHON}"; \
+	case "$$setup_python" in /*) ;; *) setup_python="$$PWD/$$setup_python" ;; esac; \
+	printf 'Virtual environment: %s\nPython: %s\n' "$$(dirname "$$(dirname "$$setup_python")")" "$$setup_python"
 
 browser-setup:
 	@"$${PRSIM_VIEWER_PYTHON}" -m playwright install chromium
@@ -49,7 +64,7 @@ browser-setup:
 test:
 	@"$${PRSIM_VIEWER_PYTHON}" -m pytest tests
 
-serve start stop status logs admin-profile-create admin-role-set admin-profile-password-set admin-user-create admin-user-enable admin-user-disable admin-password-set admin-basket-order admin-run-delete admin-refresh:
+serve start stop status logs admin-profile-create admin-role-set admin-profile-password-set admin-user-create admin-user-enable admin-user-disable admin-password-set admin-basket-order admin-run-delete admin-refresh admin-local-import admin-checkpoint-restore:
 	@"$${PRSIM_VIEWER_PYTHON}" -m viewer $@
 
 help:
@@ -81,7 +96,13 @@ help:
 	  '  make admin-run-delete RUN_ID=<uuid>' \
 	  '  make admin-refresh' \
 	  '' \
+	  'Offline administration (stop the viewer first):' \
+	  '  make admin-local-import  Import existing legacy archives with the local config' \
+	  '  make admin-checkpoint-restore CHECKPOINT_KEY=<key> TARGET_RUNTIME=<new-directory>' \
+	  '  MIGRATION_MAX_OBJECTS=<count> bounds legacy discovery (default: 100000)' \
+	  '' \
 	  'Variables:' \
+	  '  DEV=0|1                   Show [dev] beside the version (default: 0; start/serve)' \
 	  '  CONFIG=<path>             JSON config (default: config.local.json)' \
 	  '  PYTHON=<interpreter>      Setup interpreter (default: python3; must be >=3.12)' \
 	  '  VENV_PYTHON=<path>        Runtime interpreter (default: .venv/bin/python)' \

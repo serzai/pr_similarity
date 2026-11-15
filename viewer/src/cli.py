@@ -10,6 +10,8 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -19,7 +21,10 @@ from urllib.request import Request, urlopen
 import uvicorn
 from viewer.config import Config
 from viewer.errors import ViewerError
+from viewer.local_checkpoint import restore
+from viewer.local_migration import import_legacy
 from viewer.persistence.database import Database
+from viewer.persistence.storage import MockFileStore, S3Store
 from viewer.util import JsonValue, json_bytes, parse_json, require_object
 from viewer.web.api import admin_token, create_app
 
@@ -155,7 +160,8 @@ def lifecycle(command: str, config: Config, config_path: Path) -> dict | None:
         if not isinstance(running.pid, int):
             raise TypeError(f'{type(running.pid).__name__!r} object cannot be interpreted as an integer')
         os.kill(running.pid, signal.SIGTERM)
-        deadline = time.monotonic() + 20
+        # Uvicorn drains HTTP first, then lifespan waits for service.close().
+        deadline = time.monotonic() + 2 * config.shutdown_seconds + 5
         while time.monotonic() < deadline and _identity(running.pid) == running.start_ticks:
             time.sleep(0.1)
         if _identity(running.pid) == running.start_ticks:
@@ -201,8 +207,61 @@ def lifecycle(command: str, config: Config, config_path: Path) -> dict | None:
     raise ViewerError('invalid_command', 'Unknown lifecycle command.')
 
 
+@contextmanager
+def _offline_runtime(config: Config, *, allow_absent: bool = False) -> Iterator[None]:
+    """Exclude a live server and require ownership before offline administration."""
+    if not config.runtime.exists():
+        if allow_absent:
+            yield
+            return
+        raise ViewerError('runtime_missing', 'Offline import requires the existing runtime.', 409)
+    if not config.runtime.is_dir() or config.runtime.stat().st_uid != os.getuid():
+        raise ViewerError('unsafe_runtime', 'Offline administration requires the runtime owner.', 409)
+    lock_path = config.runtime / 'service.lock'
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ViewerError('already_running', 'Stop the viewer before offline administration.', 409) from None
+        yield
+
+
+def _offline_admin(command: str, config: Config) -> dict:
+    """Import legacy archives or restore an explicitly selected private checkpoint."""
+    restoring = command == 'admin-checkpoint-restore'
+    checkpoint_key = os.environ.get('PRSIM_VIEWER_CHECKPOINT_KEY', '')
+    target = os.environ.get('PRSIM_VIEWER_TARGET_RUNTIME', '')
+    if restoring and (not checkpoint_key or not target):
+        raise ViewerError('restore_arguments', 'Set CHECKPOINT_KEY and TARGET_RUNTIME explicitly.')
+    with _offline_runtime(config, allow_absent=restoring):
+        store = MockFileStore(config.runtime / 'mock-storage') if config.storage == 'mock' else S3Store(config)
+        if restoring:
+            result = restore(config, store, checkpoint_key, Path(target).expanduser())
+            return {
+                'runtime': str(result.runtime),
+                'restored_runs': result.restored_runs,
+                'lost_runs': result.lost_runs,
+            }
+        if not (config.runtime / 'viewer.sqlite').is_file():
+            raise ViewerError('database_missing', 'Import requires the existing account database.', 409)
+        raw_limit = os.environ.get('PRSIM_VIEWER_MIGRATION_MAX_OBJECTS', '100000')
+        try:
+            max_objects = int(raw_limit)
+        except ValueError:
+            raise ViewerError('invalid_migration_limit', 'MIGRATION_MAX_OBJECTS must be a positive integer.') from None
+        db = Database(config.runtime, ttl=config.grant_ttl_seconds)
+        try:
+            progress = import_legacy(config, store, db, max_objects=max_objects)
+            return {'status': progress['status'], 'imported_runs': len(progress['completed'])}
+        finally:
+            db.close()
+
+
 def administer(command: str, config: Config) -> JsonValue:
     """Apply the explicitly selected administrative operation."""
+    if command in ('admin-local-import', 'admin-checkpoint-restore'):
+        return _offline_admin(command, config)
 
     def login() -> str:
         """Read the requested login from the environment or prompt."""
@@ -227,11 +286,19 @@ def administer(command: str, config: Config) -> JsonValue:
     base = '/api/v1/admin'
     if command == 'admin-user-create':
         return _request(
-            config, 'POST', base + '/users', {'login': login(), 'password': getpass.getpass('Password: ')}, True
+            config,
+            'POST',
+            base + '/users',
+            {'login': login(), 'password': getpass.getpass('Password: ')},
+            True,
         )
     if command in ('admin-user-enable', 'admin-user-disable'):
         return _request(
-            config, 'PATCH', base + '/users/' + quote(login(), safe=''), {'enabled': command.endswith('enable')}, True
+            config,
+            'PATCH',
+            base + '/users/' + quote(login(), safe=''),
+            {'enabled': command.endswith('enable')},
+            True,
         )
     if command == 'admin-password-set':
         return _request(
@@ -271,11 +338,16 @@ def main() -> int:
         'admin-basket-order',
         'admin-run-delete',
         'admin-refresh',
+        'admin-local-import',
+        'admin-checkpoint-restore',
     ):
         print('Use make setup/start/stop/status/logs/test or an admin-* target.', file=sys.stderr)
         return 2
     try:
         path = Path(os.environ.get('PRSIM_VIEWER_CONFIG', 'config.local.json'))
+        dev = os.environ.get('PRSIM_VIEWER_DEV', '0')
+        if command in ('serve', 'start') and dev not in ('0', '1'):
+            raise ViewerError('invalid_config', 'DEV must be 0 or 1.')
         config = Config.load(path)
         if command == 'serve':
             config.runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -285,16 +357,22 @@ def main() -> int:
                 except BlockingIOError:
                     raise ViewerError('already_running', 'A viewer process already owns this runtime.', 409) from None
                 _create_token(config)
-                uvicorn.run(
-                    create_app(config),
-                    host=config.host,
-                    port=config.port,
-                    ssl_certfile=config.tls_cert,
-                    ssl_keyfile=config.tls_key,
-                    workers=1,
-                    access_log=False,
-                    timeout_graceful_shutdown=15,
-                )
+                app = create_app(config, deferred_startup=True, dev=dev == '1')
+                try:
+                    uvicorn.run(
+                        app,
+                        host=config.host,
+                        port=config.port,
+                        ssl_certfile=config.tls_cert,
+                        ssl_keyfile=config.tls_key,
+                        workers=1,
+                        access_log=False,
+                        timeout_graceful_shutdown=config.shutdown_seconds,
+                    )
+                finally:
+                    if not app.state.service.close(timeout=0):
+                        # Exit while still owning service.lock; no old writer survives unlock.
+                        os._exit(1)
             return 0
         result = (
             lifecycle(command, config, path)

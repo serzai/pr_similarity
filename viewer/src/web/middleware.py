@@ -1,14 +1,17 @@
 """Response-only security headers without buffering request or transfer bodies."""
 
 from starlette.datastructures import MutableHeaders
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from viewer.service import ViewerService
+from viewer.web.cache import public_catalogue_request
 
 
 class SecurityHeaders:
     """Add browser security headers to outgoing HTTP responses."""
 
     def __init__(self, app: ASGIApp) -> None:
-        """Initialize the resources and limits owned by this instance."""
+        """Wrap the downstream ASGI application to add response headers."""
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -29,7 +32,43 @@ class SecurityHeaders:
                     }
                 )
                 if scope.get('path', '').startswith('/api/'):
-                    target['Cache-Control'] = 'no-store'
+                    cacheable = (
+                        public_catalogue_request(scope.get('method', ''), scope.get('path', ''))
+                        and message['status'] in {200, 304}
+                        and target.get('Cache-Control') == 'public, no-cache'
+                        and 'ETag' in target
+                    )
+                    if not cacheable:
+                        target['Cache-Control'] = 'no-store'
+                        if 'ETag' in target:
+                            del target['ETag']
             await send(message)
 
         await self.app(scope, receive, headers)
+
+
+class StartupGate:
+    """Refuse unchecked catalogue requests while keeping liveness and readiness visible."""
+
+    def __init__(self, app: ASGIApp, service: ViewerService) -> None:
+        """Bind the downstream ASGI app and service startup state."""
+        self.app, self.service = app, service
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Keep unchecked result APIs unavailable until startup succeeds."""
+        state = self.service.startup
+        path = scope.get('path', '')
+        retry = path == '/api/v1/admin/refresh' and state['status'] == 'failed'
+        if scope['type'] == 'http' and path.startswith('/api/') and state['status'] != 'ready' and not retry:
+            response = JSONResponse(
+                {
+                    'error': {
+                        'code': 'service_starting',
+                        'message': 'Service is preparing its catalogue; retry shortly.',
+                    }
+                },
+                status_code=503,
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
